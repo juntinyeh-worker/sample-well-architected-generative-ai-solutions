@@ -110,57 +110,49 @@ def deploy_frontend(stack_name: str, region: str, profile: str = None):
         )
         logger.info("✅ Uploaded config.js")
 
-        # Upload frontend files
+        # Upload frontend files from the React build output
         frontend_dir = (
-            Path(__file__).parent.parent
-            / "cloud-optimization-web-interfaces/cloud-optimization-web-interface/frontend"
+            Path(__file__).parent.parent / "frontend-react" / "dist"
         )
 
         if not frontend_dir.exists():
-            logger.error(f"Frontend directory not found: {frontend_dir}")
+            logger.error(f"Frontend dist directory not found: {frontend_dir}")
+            logger.error("Run 'npm ci && npm run build' in frontend-react/ first")
             return False
 
-        # Upload HTML files
-        for html_file in frontend_dir.glob("*.html"):
-            with open(html_file, "r") as f:
-                content = f.read()
-
-            s3_client.put_object(
-                Bucket=frontend_bucket,
-                Key=html_file.name,
-                Body=content,
-                ContentType="text/html",
-            )
-            logger.info(f"✅ Uploaded {html_file.name}")
-
-        # Upload CSS files if any
-        for css_file in frontend_dir.glob("*.css"):
-            with open(css_file, "r") as f:
-                content = f.read()
-
-            s3_client.put_object(
-                Bucket=frontend_bucket,
-                Key=css_file.name,
-                Body=content,
-                ContentType="text/css",
-            )
-            logger.info(f"✅ Uploaded {css_file.name}")
-
-        # Upload JS files if any (excluding config.js template)
-        for js_file in frontend_dir.glob("*.js"):
-            if js_file.name.endswith(".template"):
+        # Sync all files from dist/
+        for file_path in frontend_dir.rglob("*"):
+            if not file_path.is_file():
                 continue
 
-            with open(js_file, "r") as f:
-                content = f.read()
+            relative = file_path.relative_to(frontend_dir)
+            key = str(relative)
 
-            s3_client.put_object(
-                Bucket=frontend_bucket,
-                Key=js_file.name,
-                Body=content,
-                ContentType="application/javascript",
-            )
-            logger.info(f"✅ Uploaded {js_file.name}")
+            # Skip config.js — we already uploaded the generated one above
+            if key == "config.js":
+                continue
+
+            # Determine content type
+            suffix = file_path.suffix.lower()
+            content_types = {
+                ".html": "text/html",
+                ".css": "text/css",
+                ".js": "application/javascript",
+                ".json": "application/json",
+                ".svg": "image/svg+xml",
+                ".png": "image/png",
+                ".ico": "image/x-icon",
+            }
+            content_type = content_types.get(suffix, "application/octet-stream")
+
+            with open(file_path, "rb") as f:
+                s3_client.put_object(
+                    Bucket=frontend_bucket,
+                    Key=key,
+                    Body=f.read(),
+                    ContentType=content_type,
+                )
+            logger.info(f"✅ Uploaded {key}")
 
         # Get CloudFront distribution ID
         distributions = cloudfront_client.list_distributions()

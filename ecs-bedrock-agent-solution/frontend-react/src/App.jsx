@@ -54,7 +54,7 @@ export default function App() {
         toolsHide
         content={
           user ? (
-            <ChatPage user={user} onLogout={handleLogout} />
+            <ChatPage user={user} />
           ) : (
             <LoginPage onLogin={handleLogin} />
           )

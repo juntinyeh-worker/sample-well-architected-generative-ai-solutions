@@ -55,7 +55,7 @@ if [[ $# -eq 0 ]]; then
 fi
 
 NEW_TEMPLATE_URL="$1"
-INDEX_FILE="cloud-optimization-web-interfaces/cloud-optimization-web-interface/frontend/index.html"
+INDEX_FILE="ecs-bedrock-agent-solution/frontend-react/dist/index.html"
 
 print_status "Updating index.html with new template URL..."
 print_status "New template URL: $NEW_TEMPLATE_URL"

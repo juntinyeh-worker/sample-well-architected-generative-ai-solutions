@@ -148,38 +148,35 @@ class ConfigService:
         logger.debug(f"Using default value for {key}: {default}")
         return default
 
+    # Map config keys to their SSM parameter paths under the prefix.
+    # Add entries here when new SSM-backed config values are needed.
+    SSM_KEY_MAP = {
+        "ENHANCED_SECURITY_AGENT_ID": "agent/wa-security-agent/agent-id",
+        "ENHANCED_SECURITY_AGENT_ALIAS_ID": "agent/wa-security-agent/alias-id",
+    }
+
     def _get_ssm_parameter(self, key: str) -> Optional[str]:
-        """Get parameter from SSM Parameter Store"""
+        """Get parameter from SSM Parameter Store using the key map."""
         if not self.ssm_client or self._ssm_available is False:
             return None
 
-        if key == "ENHANCED_SECURITY_AGENT_ID":
-            parameter_name = "/coa/agent/wa-security-agent/agent-id"
-        elif key == "ENHANCED_SECURITY_AGENT_ALIAS_ID":
-            parameter_name = "/coa/agent/wa-security-agent/alias-id"
-        else:
+        relative = self.SSM_KEY_MAP.get(key)
+        if relative is None:
             return None
 
+        parameter_name = f"{self.ssm_prefix}{relative}"
         try:
-            response = self.ssm_client.get_parameter(
-                Name=parameter_name,
-                WithDecryption=True,  # Decrypt SecureString parameters
-            )
-            value = response["Parameter"]["Value"]
+            value = self.ssm_client.get_parameter(
+                Name=parameter_name, WithDecryption=True
+            )["Parameter"]["Value"]
             logger.info(f"Retrieved {key} from SSM Parameter Store")
             return value
-
         except ClientError as e:
-            error_code = e.response["Error"]["Code"]
-            if error_code == "ParameterNotFound":
-                logger.debug(f"SSM parameter not found: {parameter_name}")
-            else:
+            if e.response["Error"]["Code"] != "ParameterNotFound":
                 logger.warning(f"Error retrieving SSM parameter {parameter_name}: {e}")
             return None
         except Exception as e:
-            logger.warning(
-                f"Unexpected error retrieving SSM parameter {parameter_name}: {e}"
-            )
+            logger.warning(f"Unexpected error retrieving SSM parameter {parameter_name}: {e}")
             return None
 
     def get_all_config(self) -> Dict[str, str]:

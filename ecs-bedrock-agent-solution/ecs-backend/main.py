@@ -26,6 +26,8 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from contextlib import asynccontextmanager
+
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -57,106 +59,80 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# Startup validation function
-async def validate_startup_requirements():
-    """Validate SSM access and agent configuration during startup"""
-    logger.info("Starting backend service initialization...")
-
-    # Validate SSM connectivity
+# Startup validation helpers
+def _validate_ssm():
+    """Validate SSM connectivity and agent configuration."""
     try:
         ssm_status = config_service.get_ssm_status()
-        if ssm_status["available"]:
-            logger.info("✓ SSM Parameter Store connectivity verified")
+        if not ssm_status["available"]:
+            logger.warning("⚠ SSM Parameter Store not available - using environment variables")
+            return
+        logger.info("✓ SSM Parameter Store connectivity verified")
+        test_config = config_service.get_all_config()
+        logger.info(f"✓ Retrieved {len(test_config)} configuration parameters from SSM")
 
-            # Test retrieving a configuration parameter
-            test_config = config_service.get_all_config()
-            logger.info(
-                f"✓ Retrieved {len(test_config)} configuration parameters from SSM"
-            )
-
-            # Validate agent configuration
-            agent_id = config_service.get_config_value("ENHANCED_SECURITY_AGENT_ID")
-            agent_alias_id = config_service.get_config_value(
-                "ENHANCED_SECURITY_AGENT_ALIAS_ID"
-            )
-
-            if agent_id and agent_alias_id:
-                logger.info("✓ Enhanced Security Agent configuration found")
-                logger.info(f"  Agent ID: {agent_id}")
-                logger.info(f"  Agent Alias ID: {agent_alias_id}")
-            else:
-                logger.warning("⚠ Enhanced Security Agent configuration incomplete")
-                logger.warning("  Some agent parameters missing from SSM")
+        agent_id = config_service.get_config_value("ENHANCED_SECURITY_AGENT_ID")
+        agent_alias_id = config_service.get_config_value("ENHANCED_SECURITY_AGENT_ALIAS_ID")
+        if agent_id and agent_alias_id:
+            logger.info(f"✓ Enhanced Security Agent configured (Agent: {agent_id})")
         else:
-            logger.warning(
-                "⚠ SSM Parameter Store not available - using environment variables"
-            )
-
+            logger.warning("⚠ Enhanced Security Agent configuration incomplete")
     except Exception as e:
         logger.error(f"✗ SSM validation failed: {e}")
-        logger.info("Falling back to environment variables")
 
-    # Validate AWS credentials and permissions
+
+def _validate_aws_credentials():
+    """Validate AWS credentials and SSM permissions."""
+    import boto3
+    from botocore.exceptions import ClientError, NoCredentialsError
+
     try:
-        import boto3
-        from botocore.exceptions import ClientError, NoCredentialsError
-
-        # Test basic AWS connectivity
-        sts_client = boto3.client("sts")
-        identity = sts_client.get_caller_identity()
+        identity = boto3.client("sts").get_caller_identity()
         logger.info(f"✓ AWS credentials valid - Account: {identity.get('Account')}")
-
-        # Test SSM permissions specifically
-        ssm_client = boto3.client("ssm")
-        ssm_client.describe_parameters(MaxResults=1)
+        boto3.client("ssm").describe_parameters(MaxResults=1)
         logger.info("✓ SSM permissions verified")
-
     except NoCredentialsError:
         logger.error("✗ AWS credentials not found")
-        logger.error(
-            "  Please configure AWS credentials via environment variables, IAM role, or AWS CLI"
-        )
     except ClientError as e:
-        if e.response["Error"]["Code"] == "AccessDenied":
-            logger.error("✗ Insufficient AWS permissions for SSM access")
-            logger.error(
-                "  Please ensure the IAM role/user has ssm:GetParameter and ssm:DescribeParameters permissions"
-            )
-        else:
-            logger.error(f"✗ AWS connectivity error: {e}")
+        logger.error(f"✗ AWS error: {e}")
     except Exception as e:
         logger.error(f"✗ Unexpected AWS validation error: {e}")
 
-    # Validate Bedrock access
+
+def _validate_bedrock():
+    """Validate Bedrock connectivity."""
+    import boto3
+
     try:
-        bedrock_region = config_service.get_config_value("BEDROCK_REGION", "us-east-1")
-        bedrock_client = boto3.client("bedrock-runtime", region_name=bedrock_region)
-
-        # Test if we can list foundation models (basic connectivity test)
-        bedrock_client = boto3.client("bedrock", region_name=bedrock_region)
-        models = bedrock_client.list_foundation_models(byOutputModality="TEXT")
-        logger.info(f"✓ Bedrock connectivity verified in {bedrock_region}")
-        logger.info(f"  Foundation models available: {len(models['modelSummaries'])}")
-
+        region = config_service.get_config_value("BEDROCK_REGION", "us-east-1")
+        models = boto3.client("bedrock", region_name=region).list_foundation_models(byOutputModality="TEXT")
+        logger.info(f"✓ Bedrock connectivity verified in {region} ({len(models['modelSummaries'])} models)")
     except Exception as e:
         logger.warning(f"⚠ Bedrock validation failed: {e}")
-        logger.warning("  Bedrock functionality may be limited")
 
+
+async def validate_startup_requirements():
+    """Validate SSM access, AWS credentials, and Bedrock during startup."""
+    logger.info("Starting backend service initialization...")
+    _validate_ssm()
+    _validate_aws_credentials()
+    _validate_bedrock()
     logger.info("Backend service initialization complete")
+
+
+@asynccontextmanager
+async def lifespan(app):
+    """Run startup validation when the application starts."""
+    await validate_startup_requirements()
+    yield
 
 
 app = FastAPI(
     title="Cloud Optimization MCP Web Interface",
     description="Web interface for AWS cloud optimization assessments using Bedrock and MCP",
     version="1.0.0",
+    lifespan=lifespan,
 )
-
-
-# Add startup event handler
-@app.on_event("startup")
-async def startup_event():
-    """Run startup validation when the application starts"""
-    await validate_startup_requirements()
 
 
 # CORS middleware - Allow local development
@@ -278,123 +254,65 @@ async def get_current_user(
         )
 
 
+async def _check_environment() -> Optional[str]:
+    """Return error string if required env vars are missing, else None."""
+    required = ["USER_POOL_ID", "WEB_APP_CLIENT_ID", "AWS_DEFAULT_REGION"]
+    missing = [v for v in required if not os.getenv(v) and not config_service.get_config_value(v)]
+    return f"Missing: {', '.join(missing)}" if missing else None
+
+
+async def _check_services() -> Dict[str, str]:
+    """Return dict of service name → status."""
+    statuses: Dict[str, str] = {"auth": "healthy"}
+    for name, svc, is_async in [
+        ("orchestrator", orchestrator_service, True),
+        ("mcp", mcp_service, True),
+    ]:
+        try:
+            statuses[name] = await svc.health_check() if is_async else svc.health_check()
+        except Exception as e:
+            logger.warning(f"{name} health check failed: {e}")
+            statuses[name] = "unhealthy"
+
+    if use_enhanced_agent and bedrock_service and hasattr(bedrock_service, "get_agent_info"):
+        try:
+            info = bedrock_service.get_agent_info()
+            statuses["enhanced_agent"] = "configured" if info["configured"] else "not_configured"
+        except Exception:
+            statuses["enhanced_agent"] = "unhealthy"
+
+    return statuses
+
+
 @app.get("/health")
 async def health_check():
-    """
-    Health check endpoint for container and load balancer health monitoring.
-    Returns 200 OK when service is healthy, 503 Service Unavailable otherwise.
-    """
+    """Health check endpoint for container / load balancer monitoring."""
     try:
-        # Basic service health checks
-        health_status = {
+        result = {
             "status": "healthy",
             "timestamp": datetime.utcnow().isoformat(),
             "service": "cloud-optimization-backend",
             "version": "1.0.0",
-            "checks": {
-                "dependencies": "healthy",
-                "environment": "healthy",
-                "services": "healthy"
-            }
         }
-        
-        # Environment variable validation
-        required_env_vars = ["USER_POOL_ID", "WEB_APP_CLIENT_ID", "AWS_DEFAULT_REGION"]
-        missing_vars = []
-        
-        for env_var in required_env_vars:
-            # Check both environment variables and config service
-            env_value = os.getenv(env_var)
-            config_value = config_service.get_config_value(env_var) if config_service else None
-            
-            if not env_value and not config_value:
-                missing_vars.append(env_var)
-        
-        if missing_vars:
-            health_status["status"] = "unhealthy"
-            health_status["checks"]["environment"] = f"Missing required environment variables: {', '.join(missing_vars)}"
-            return JSONResponse(
-                status_code=503,
-                content=health_status
-            )
-        
-        # Service dependency checks
-        try:
-            services_status = {
-                "auth": "healthy",
-            }
-            
-            # Check orchestrator service
-            try:
-                services_status["orchestrator"] = await orchestrator_service.health_check()
-            except Exception as e:
-                logger.warning(f"Orchestrator health check failed: {e}")
-                services_status["orchestrator"] = "unhealthy"
-            
-            # Check MCP service
-            try:
-                services_status["mcp"] = await mcp_service.health_check()
-            except Exception as e:
-                logger.warning(f"MCP health check failed: {e}")
-                services_status["mcp"] = "unhealthy"
-            
-            # Add Enhanced Security Agent info if using it
-            if (
-                use_enhanced_agent
-                and bedrock_service
-                and hasattr(bedrock_service, "get_agent_info")
-            ):
-                try:
-                    agent_info = bedrock_service.get_agent_info()
-                    services_status["enhanced_agent"] = (
-                        "configured" if agent_info["configured"] else "not_configured"
-                    )
-                except Exception as e:
-                    logger.warning(f"Enhanced agent health check failed: {e}")
-                    services_status["enhanced_agent"] = "unhealthy"
-            
-            # Check if any critical services are unhealthy
-            unhealthy_services = [k for k, v in services_status.items() if v not in ["healthy", "degraded", "configured"]]
-            if unhealthy_services:
-                health_status["status"] = "unhealthy"
-                health_status["checks"]["services"] = f"Unhealthy services: {', '.join(unhealthy_services)}"
-                health_status["services"] = services_status
-                return JSONResponse(
-                    status_code=503,
-                    content=health_status
-                )
-            
-            health_status["services"] = services_status
-            
-        except Exception as service_error:
-            logger.error(f"Service health check failed: {str(service_error)}")
-            health_status["status"] = "unhealthy"
-            health_status["checks"]["services"] = f"Service check error: {str(service_error)}"
-            return JSONResponse(
-                status_code=503,
-                content=health_status
-            )
-        
-        # All checks passed
-        return JSONResponse(status_code=200, content=health_status)
-        
+
+        env_err = await _check_environment()
+        if env_err:
+            result["status"] = "unhealthy"
+            result["error"] = env_err
+            return JSONResponse(status_code=503, content=result)
+
+        services = await _check_services()
+        result["services"] = services
+        unhealthy = [k for k, v in services.items() if v not in ("healthy", "degraded", "configured")]
+        if unhealthy:
+            result["status"] = "unhealthy"
+            result["error"] = f"Unhealthy services: {', '.join(unhealthy)}"
+            return JSONResponse(status_code=503, content=result)
+
+        return JSONResponse(status_code=200, content=result)
     except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
-        return JSONResponse(
-            status_code=503,
-            content={
-                "status": "unhealthy",
-                "timestamp": datetime.utcnow().isoformat(),
-                "service": "cloud-optimization-backend",
-                "version": "1.0.0",
-                "error": str(e),
-                "checks": {
-                    "dependencies": "error",
-                    "environment": "error", 
-                    "services": "error"
-                }
-            }
-        )
+        logger.error(f"Health check failed: {e}")
+        return JSONResponse(status_code=503, content={"status": "unhealthy", "error": str(e)})
 
 
 @app.post("/api/chat", response_model=ChatResponse)

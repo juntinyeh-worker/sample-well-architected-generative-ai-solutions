@@ -64,9 +64,6 @@ export default function LoginPage({ onLogin }) {
                   />
                 </FormField>
                 {error && <Alert type="error">{error}</Alert>}
-                <Alert type="info">
-                  <strong>Demo Credentials:</strong> testuser@example.com / TestPass123!
-                </Alert>
               </SpaceBetween>
             </Form>
           </form>
