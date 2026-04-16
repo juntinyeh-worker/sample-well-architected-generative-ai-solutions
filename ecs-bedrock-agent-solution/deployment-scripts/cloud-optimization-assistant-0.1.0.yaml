@@ -12,22 +12,49 @@ Parameters:
     Description: Environment name for resource tagging and configuration
     ConstraintDescription: Must be one of dev, staging, or prod
 
-  SourceBucket:
-    Type: String
-    Description: S3 bucket for source code storage (created by deployment script)
-    MinLength: 3
-    MaxLength: 63
-    AllowedPattern: '^[a-z0-9][a-z0-9.-]*[a-z0-9]$'
-    ConstraintDescription: 'Bucket name must be 3-63 characters, lowercase, and follow S3 naming rules'
-
-  SourceKey:
-    Type: String
-    Default: source.zip
-    Description: S3 key for source code zip file
-
 Resources:
-  # ===== NOTE: SourceBucket is created by deployment script =====
-  # No bucket validation needed as deployment script handles bucket creation and configuration
+  # ===== SOURCE BUCKETS =====
+  # Private buckets for backend and frontend source code.
+  # Users trigger deployments by running: aws s3 sync <local-dir> s3://<bucket>/
+  BackendSourceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-backend-source-${AWS::AccountId}-${AWS::Region}'
+      VersioningConfiguration:
+        Status: Enabled
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Component
+          Value: BackendSource
+        - Key: Environment
+          Value: !Ref Environment
+
+  FrontendSourceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-frontend-source-${AWS::AccountId}-${AWS::Region}'
+      VersioningConfiguration:
+        Status: Enabled
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Component
+          Value: FrontendSource
+        - Key: Environment
+          Value: !Ref Environment
 
   # ===== COGNITO RESOURCES =====
   SharedUserPool:
@@ -202,14 +229,13 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
-  # ===== S3 EVENT TRIGGER SYSTEM =====
-  # EventBridge rule to trigger CodePipeline on S3 object creation
-  S3PipelineTriggerRule:
+  # ===== S3 EVENT TRIGGERS =====
+  BackendSourceTriggerRule:
     Type: AWS::Events::Rule
-    DependsOn: CodePipeline
+    DependsOn: BackendPipeline
     Properties:
-      Name: !Sub '${AWS::StackName}-s3-pipeline-trigger'
-      Description: 'Trigger CodePipeline when source code is uploaded to S3'
+      Name: !Sub '${AWS::StackName}-backend-source-trigger'
+      Description: 'Trigger backend pipeline when source is synced to S3'
       EventPattern:
         source:
           - aws.s3
@@ -218,14 +244,32 @@ Resources:
         detail:
           bucket:
             name:
-              - !Ref SourceBucket
-          object:
-            key:
-              - prefix: !Ref SourceKey
+              - !Ref BackendSourceBucket
       State: ENABLED
       Targets:
-        - Arn: !Sub 'arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${AWS::StackName}-pipeline'
-          Id: CodePipelineTarget
+        - Arn: !Sub 'arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${AWS::StackName}-backend-pipeline'
+          Id: BackendPipelineTarget
+          RoleArn: !GetAtt EventBridgeCodePipelineRole.Arn
+
+  FrontendSourceTriggerRule:
+    Type: AWS::Events::Rule
+    DependsOn: FrontendPipeline
+    Properties:
+      Name: !Sub '${AWS::StackName}-frontend-source-trigger'
+      Description: 'Trigger frontend pipeline when source is synced to S3'
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - Object Created
+        detail:
+          bucket:
+            name:
+              - !Ref FrontendSourceBucket
+      State: ENABLED
+      Targets:
+        - Arn: !Sub 'arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${AWS::StackName}-frontend-pipeline'
+          Id: FrontendPipelineTarget
           RoleArn: !GetAtt EventBridgeCodePipelineRole.Arn
 
   # IAM role for EventBridge to trigger CodePipeline
@@ -248,14 +292,14 @@ Resources:
               - Effect: Allow
                 Action:
                   - codepipeline:StartPipelineExecution
-                Resource: !Sub 'arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${AWS::StackName}-pipeline'
+                Resource:
+                  - !Sub 'arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${AWS::StackName}-backend-pipeline'
+                  - !Sub 'arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${AWS::StackName}-frontend-pipeline'
       Tags:
         - Key: Component
           Value: EventBridge
         - Key: Environment
           Value: !Ref Environment
-
-  # ===== NOTE: S3 EventBridge configuration handled by deployment script =====
 
   # ===== ECR REPOSITORY =====
   # Move ECR repository before IAM roles to resolve dependency cycle
@@ -324,14 +368,16 @@ Resources:
                   - s3:GetObjectVersion
                   - s3:PutObject
                 Resource:
-                  - !Sub 'arn:aws:s3:::${SourceBucket}/*'
+                  - !Sub '${BackendSourceBucket.Arn}/*'
+                  - !Sub '${FrontendSourceBucket.Arn}/*'
                   - !Sub '${ArtifactsBucket.Arn}/*'
               - Effect: Allow
                 Action:
                   - s3:ListBucket
                   - s3:GetBucketVersioning
                 Resource:
-                  - !Sub 'arn:aws:s3:::${SourceBucket}'
+                  - !GetAtt BackendSourceBucket.Arn
+                  - !GetAtt FrontendSourceBucket.Arn
                   - !GetAtt ArtifactsBucket.Arn
               - Effect: Allow
                 Action:
@@ -406,15 +452,18 @@ Resources:
                   - s3:GetObjectVersion
                   - s3:PutObject
                 Resource:
-                  - !Sub 'arn:aws:s3:::${SourceBucket}/*'
+                  - !Sub '${BackendSourceBucket.Arn}/*'
+                  - !Sub '${FrontendSourceBucket.Arn}/*'
                   - !Sub '${ArtifactsBucket.Arn}/*'
                   - !Sub '${FrontendBucket.Arn}/*'
               - Effect: Allow
                 Action:
                   - s3:ListBucket
                   - s3:GetBucketVersioning
+                  - s3:DeleteObject
                 Resource:
-                  - !Sub 'arn:aws:s3:::${SourceBucket}'
+                  - !GetAtt BackendSourceBucket.Arn
+                  - !GetAtt FrontendSourceBucket.Arn
                   - !GetAtt ArtifactsBucket.Arn
                   - !GetAtt FrontendBucket.Arn
               - Effect: Allow
@@ -479,12 +528,12 @@ Resources:
               - sns:Publish
             Resource: !Ref PipelineNotificationTopic
 
-  # Pipeline failure alarm
+  # Pipeline failure alarm - Backend
   PipelineFailureAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub '${AWS::StackName}-pipeline-failure'
-      AlarmDescription: 'Alert when CodePipeline execution fails'
+      AlarmName: !Sub '${AWS::StackName}-backend-pipeline-failure'
+      AlarmDescription: 'Alert when backend pipeline execution fails'
       MetricName: PipelineExecutionFailure
       Namespace: AWS/CodePipeline
       Statistic: Sum
@@ -494,7 +543,7 @@ Resources:
       ComparisonOperator: GreaterThanOrEqualToThreshold
       Dimensions:
         - Name: PipelineName
-          Value: !Ref CodePipeline
+          Value: !Ref BackendPipeline
       AlarmActions:
         - !Ref PipelineNotificationTopic
       Tags:
@@ -566,7 +615,8 @@ Resources:
           - CodePipeline Pipeline Execution State Change
         detail:
           pipeline:
-            - !Sub '${AWS::StackName}-pipeline'
+            - !Sub '${AWS::StackName}-backend-pipeline'
+            - !Sub '${AWS::StackName}-frontend-pipeline'
           state:
             - FAILED
             - SUCCEEDED
@@ -605,21 +655,21 @@ Resources:
             Value: !Ref FrontendBucket
           - Name: CLOUDFRONT_DISTRIBUTION_ID
             Value: !Ref CloudFrontDistribution
+          - Name: CLOUDFRONT_DOMAIN
+            Value: !GetAtt CloudFrontDistribution.DomainName
           - Name: USER_POOL_ID
             Value: !Ref SharedUserPool
           - Name: WEB_APP_CLIENT_ID
             Value: !Ref WebAppClient
-          - Name: API_CLIENT_ID
-            Value: !Ref APIClient
-          - Name: MCP_SERVER_CLIENT_ID
-            Value: !Ref MCPServerClient
-          - Name: ALB_DNS_NAME
-            Value: !GetAtt ApplicationLoadBalancer.DNSName
-          - Name: CLOUDFRONT_DOMAIN
-            Value: !GetAtt CloudFrontDistribution.DomainName
+          - Name: AWS_STACK_NAME
+            Value: !Ref AWS::StackName
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+          - Name: ENVIRONMENT
+            Value: !Ref Environment
       Source:
         Type: CODEPIPELINE
-        BuildSpec: deployment-scripts/buildspecs/frontend-buildspec.yml
+        BuildSpec: buildspecs/frontend-buildspec.yml
       TimeoutInMinutes: 10
       Tags:
         - Key: Component
@@ -653,7 +703,7 @@ Resources:
 
       Source:
         Type: CODEPIPELINE
-        BuildSpec: deployment-scripts/buildspecs/backend-buildspec.yml
+        BuildSpec: buildspecs/backend-buildspec.yml
       TimeoutInMinutes: 15
       Tags:
         - Key: Environment
@@ -839,8 +889,10 @@ Resources:
               - s3:ListBucket
               - s3:GetBucketVersioning
             Resource:
-              - !Sub 'arn:aws:s3:::${SourceBucket}'
-              - !Sub 'arn:aws:s3:::${SourceBucket}/*'
+              - !GetAtt BackendSourceBucket.Arn
+              - !Sub '${BackendSourceBucket.Arn}/*'
+              - !GetAtt FrontendSourceBucket.Arn
+              - !Sub '${FrontendSourceBucket.Arn}/*'
               - !Sub '${ArtifactsBucket.Arn}'
               - !Sub '${ArtifactsBucket.Arn}/*'
               - !Sub '${FrontendBucket.Arn}'
@@ -1373,14 +1425,12 @@ Resources:
         Environment: !Ref Environment
         Component: Bedrock
 
-  # ===== CODEPIPELINE =====
-  CodePipeline:
+  # ===== CODEPIPELINES =====
+  BackendPipeline:
     Type: AWS::CodePipeline::Pipeline
-    DependsOn: 
-      - BackendBuildProject
-      - FrontendBuildProject
+    DependsOn: BackendBuildProject
     Properties:
-      Name: !Sub '${AWS::StackName}-pipeline'
+      Name: !Sub '${AWS::StackName}-backend-pipeline'
       RoleArn: !GetAtt CodePipelineServiceRole.Arn
       ArtifactStore:
         Type: S3
@@ -1388,34 +1438,21 @@ Resources:
       Stages:
         - Name: Source
           Actions:
-            - Name: SourceAction
+            - Name: BackendSource
               ActionTypeId:
                 Category: Source
                 Owner: AWS
                 Provider: S3
                 Version: '1'
               Configuration:
-                S3Bucket: !Ref SourceBucket
-                S3ObjectKey: !Ref SourceKey
+                S3Bucket: !Ref BackendSourceBucket
+                S3ObjectKey: source.zip
                 PollForSourceChanges: false
               OutputArtifacts:
-                - Name: SourceOutput
-
+                - Name: BackendSourceOutput
         - Name: Build
           Actions:
-            - Name: FrontendBuild
-              ActionTypeId:
-                Category: Build
-                Owner: AWS
-                Provider: CodeBuild
-                Version: '1'
-              Configuration:
-                ProjectName: !Ref FrontendBuildProject
-              InputArtifacts:
-                - Name: SourceOutput
-              RunOrder: 1
-
-            - Name: BackendBuild
+            - Name: BuildImage
               ActionTypeId:
                 Category: Build
                 Owner: AWS
@@ -1424,14 +1461,12 @@ Resources:
               Configuration:
                 ProjectName: !Ref BackendBuildProject
               InputArtifacts:
-                - Name: SourceOutput
+                - Name: BackendSourceOutput
               OutputArtifacts:
                 - Name: BackendBuildOutput
-              RunOrder: 1
-
         - Name: Deploy
           Actions:
-            - Name: DeployBackend
+            - Name: DeployECS
               ActionTypeId:
                 Category: Deploy
                 Owner: AWS
@@ -1443,11 +1478,51 @@ Resources:
                 FileName: imagedefinitions.json
               InputArtifacts:
                 - Name: BackendBuildOutput
-              RunOrder: 1
-
       Tags:
         - Key: Component
-          Value: CodePipeline
+          Value: BackendPipeline
+        - Key: Environment
+          Value: !Ref Environment
+
+  FrontendPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    DependsOn: FrontendBuildProject
+    Properties:
+      Name: !Sub '${AWS::StackName}-frontend-pipeline'
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactsBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: FrontendSource
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: S3
+                Version: '1'
+              Configuration:
+                S3Bucket: !Ref FrontendSourceBucket
+                S3ObjectKey: source.zip
+                PollForSourceChanges: false
+              OutputArtifacts:
+                - Name: FrontendSourceOutput
+        - Name: Build
+          Actions:
+            - Name: BuildAndDeploy
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref FrontendBuildProject
+              InputArtifacts:
+                - Name: FrontendSourceOutput
+      Tags:
+        - Key: Component
+          Value: FrontendPipeline
         - Key: Environment
           Value: !Ref Environment
 
@@ -1525,6 +1600,18 @@ Outputs:
     Value: !Ref FrontendBucket
     Export:
       Name: !Sub '${AWS::StackName}-FrontendBucketName'
+
+  BackendSourceBucketName:
+    Description: S3 bucket for backend source code — deploy with aws s3 sync
+    Value: !Ref BackendSourceBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-BackendSourceBucketName'
+
+  FrontendSourceBucketName:
+    Description: S3 bucket for frontend source code — deploy with aws s3 sync
+    Value: !Ref FrontendSourceBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-FrontendSourceBucketName'
 
   VPCId:
     Description: VPC ID

@@ -5,7 +5,6 @@ phases:
       nodejs: 20
     commands:
       - echo Installing frontend dependencies...
-      - cd ecs-bedrock-agent-solution/frontend-react
       - npm ci
   build:
     commands:
@@ -34,8 +33,6 @@ phases:
           }
         };
         EOF
-      - echo "✅ Build complete. dist/ contents:"
-      - ls -la dist/
   post_build:
     commands:
       - echo "📦 Uploading frontend to S3..."
@@ -44,4 +41,4 @@ phases:
       - aws s3 cp dist/config.js s3://$FRONTEND_BUCKET/config.js --content-type "application/javascript" --cache-control "no-cache"
       - echo "🔄 Creating CloudFront invalidation..."
       - aws cloudfront create-invalidation --distribution-id $CLOUDFRONT_DISTRIBUTION_ID --paths "/*"
-      - echo "✅ Frontend deployment completed on `date`"
+      - echo "✅ Frontend deployment completed"
