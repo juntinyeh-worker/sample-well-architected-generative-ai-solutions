@@ -1,0 +1,136 @@
+name: Run Unit Tests
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  discover-tests:
+    name: Discover test suites
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.find.outputs.matrix }}
+      has_tests: ${{ steps.find.outputs.has_tests }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find directories with tests
+        id: find
+        run: |
+          # Find directories that contain a tests/ folder with test_*.py files
+          TEST_DIRS=()
+          while IFS= read -r test_file; do
+            # Get the project root (parent of tests/)
+            test_dir=$(dirname "$test_file")
+            project_dir=$(dirname "$test_dir")
+            # Deduplicate
+            if [[ ! " ${TEST_DIRS[*]} " =~ " ${project_dir} " ]]; then
+              TEST_DIRS+=("$project_dir")
+            fi
+          done < <(find . -path '*/tests/test_*.py' -not -path './.git/*' | sort)
+
+          if [ ${#TEST_DIRS[@]} -eq 0 ]; then
+            echo "has_tests=false" >> "$GITHUB_OUTPUT"
+            echo "matrix={\"include\":[]}" >> "$GITHUB_OUTPUT"
+            echo "No test suites found."
+          else
+            echo "has_tests=true" >> "$GITHUB_OUTPUT"
+            # Build matrix JSON
+            MATRIX_JSON="{\"include\":["
+            FIRST=true
+            for dir in "${TEST_DIRS[@]}"; do
+              # Determine name from directory
+              name=$(basename "$dir")
+              
+              # Check for requirements.txt or pyproject.toml
+              deps_file=""
+              if [ -f "$dir/requirements.txt" ]; then
+                deps_file="requirements.txt"
+              fi
+              
+              if [ "$FIRST" = true ]; then
+                FIRST=false
+              else
+                MATRIX_JSON+=","
+              fi
+              MATRIX_JSON+="{\"name\":\"$name\",\"path\":\"$dir\",\"deps_file\":\"$deps_file\"}"
+            done
+            MATRIX_JSON+="]}"
+            echo "matrix=$MATRIX_JSON" >> "$GITHUB_OUTPUT"
+            echo "Found test suites: ${TEST_DIRS[*]}"
+          fi
+
+  test:
+    name: "Test: ${{ matrix.name }}"
+    needs: discover-tests
+    if: needs.discover-tests.outputs.has_tests == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover-tests.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: ${{ matrix.path }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov pytest-asyncio httpx
+
+          # Install project dependencies if requirements.txt exists
+          if [ -n "${{ matrix.deps_file }}" ] && [ -f "${{ matrix.deps_file }}" ]; then
+            pip install -r "${{ matrix.deps_file }}"
+          fi
+
+          # Install from pyproject.toml if it exists (editable mode)
+          if [ -f "pyproject.toml" ]; then
+            pip install -e ".[dev]" 2>/dev/null || pip install -e "." 2>/dev/null || true
+          fi
+
+      - name: Run tests with coverage
+        working-directory: ${{ matrix.path }}
+        run: |
+          python -m pytest tests/ \
+            --cov=. \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --junitxml=test-results.xml \
+            -v \
+            --tb=short
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.name }}
+          path: |
+            ${{ matrix.path }}/test-results.xml
+            ${{ matrix.path }}/coverage.xml
+
+  test-summary:
+    name: Test Summary
+    needs: [discover-tests, test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          if [ "${{ needs.discover-tests.outputs.has_tests }}" != "true" ]; then
+            echo "ℹ️ No test suites found in repository."
+            exit 0
+          fi
+
+          if [ "${{ needs.test.result }}" = "success" ]; then
+            echo "✅ All test suites passed!"
+          else
+            echo "❌ Some test suites failed."
+            exit 1
+          fi
