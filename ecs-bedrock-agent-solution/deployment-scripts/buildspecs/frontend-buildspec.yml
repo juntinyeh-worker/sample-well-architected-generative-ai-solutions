@@ -1,0 +1,56 @@
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20
+    commands:
+      - echo Installing frontend dependencies...
+      - cd ecs-bedrock-agent-solution/frontend
+      - npm ci
+  pre_build:
+    commands:
+      - echo Frontend build started on `date`
+      - echo "Current directory contents:"
+      - ls -la
+  build:
+    commands:
+      - echo Creating runtime configuration...
+      - |
+        cat > public/config.js << EOF
+        window.APP_CONFIG = {
+          "cognito": {
+            "userPoolId": "$USER_POOL_ID",
+            "clientId": "$WEB_APP_CLIENT_ID",
+            "domain": "${AWS_STACK_NAME}-${AWS_ACCOUNT_ID}-${ENVIRONMENT}.auth.${AWS_DEFAULT_REGION}.amazoncognito.com"
+          },
+          "api": {
+            "baseUrl": "https://$CLOUDFRONT_DOMAIN",
+            "endpoints": {
+              "chat": "https://$CLOUDFRONT_DOMAIN/api/chat",
+              "health": "https://$CLOUDFRONT_DOMAIN/api/health",
+              "websocket": "wss://$CLOUDFRONT_DOMAIN/ws"
+            }
+          },
+          "app": {
+            "name": "Cloud Optimization Platform",
+            "version": "1.0.0"
+          }
+        };
+        EOF
+      - echo "✅ Configuration created successfully"
+      - echo "Building React application..."
+      - npm run build
+      - echo "✅ Build completed"
+      - echo "Build output:"
+      - ls -la dist/
+  post_build:
+    commands:
+      - echo "📦 Uploading frontend files to S3..."
+      - aws s3 sync dist/ s3://$FRONTEND_BUCKET/ --delete --cache-control "max-age=31536000,public" --exclude "index.html" --exclude "config.js"
+      - aws s3 cp dist/index.html s3://$FRONTEND_BUCKET/index.html --content-type "text/html" --cache-control "no-cache"
+      - aws s3 cp dist/config.js s3://$FRONTEND_BUCKET/config.js --content-type "application/javascript" --cache-control "no-cache" 2>/dev/null || true
+      - echo "Uploading local-test.html (if present)..."
+      - aws s3 cp local-test.html s3://$FRONTEND_BUCKET/local-test.html --content-type "text/html" || echo "local-test.html not found, skipping"
+      - echo "🔄 Creating CloudFront invalidation..."
+      - aws cloudfront create-invalidation --distribution-id $CLOUDFRONT_DISTRIBUTION_ID --paths "/*"
+      - echo "✅ Frontend deployment completed on `date`"
