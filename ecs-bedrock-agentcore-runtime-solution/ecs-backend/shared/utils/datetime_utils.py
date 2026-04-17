@@ -1,5 +1,5 @@
 """
-Date and time utilities for AgentCore runtime.
+Date and time utilities for both BedrockAgent and AgentCore versions.
 """
 
 from datetime import datetime, timezone, timedelta

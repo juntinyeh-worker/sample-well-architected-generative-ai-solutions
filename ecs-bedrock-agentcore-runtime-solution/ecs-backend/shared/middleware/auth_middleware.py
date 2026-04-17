@@ -1,5 +1,5 @@
 """
-Authentication middleware for AgentCore runtime.
+Authentication middleware for both BedrockAgent and AgentCore versions.
 """
 
 import os
@@ -44,7 +44,7 @@ class AuthMiddleware:
             return True
         
         # Check if running in local mode (localhost)
-        if "localhost" in os.getenv("API_BASE_URL", ""):
+        if os.getenv("BACKEND_MODE") and "localhost" in os.getenv("API_BASE_URL", ""):
             return True
         
         return False
@@ -205,19 +205,19 @@ def create_optional_auth_dependency(auth_service: AuthService) -> Callable:
 class AuthConfig:
     """Configuration for authentication middleware."""
     
-    def __init__(self, version: str = "agentcore"):
+    def __init__(self, version: str):
         """
         Initialize auth configuration.
         
         Args:
-            version: Backend version (always "agentcore")
+            version: Backend version ("bedrockagent" or "agentcore")
         """
         self.version = version
         self.skip_auth_paths = self._get_version_specific_skip_paths()
     
     def _get_version_specific_skip_paths(self) -> list:
-        """Get paths that skip authentication."""
-        return [
+        """Get version-specific paths that skip authentication."""
+        base_paths = [
             "/health",
             "/health/detailed",
             "/docs",
@@ -225,12 +225,23 @@ class AuthConfig:
             "/openapi.json",
             "/api/mcp/status",
             "/api/agents/status",
-            "/agents",
-            "/api/prompt-templates",
-            "/api/agentcore/status",
-            "/api/debug/strands-agents",
-            "/api/parameter-manager/config",
+            "/agents",  # For local testing
+            "/api/prompt-templates"
         ]
+        
+        if self.version == "bedrockagent":
+            base_paths.extend([
+                "/api/orchestration/status",
+                "/api/orchestration/config",
+                "/api/mcp/servers",
+                "/api/mcp/tools"
+            ])
+        elif self.version == "agentcore":
+            base_paths.extend([
+                "/api/agentcore/status",
+                "/api/debug/strands-agents",
+                "/api/parameter-manager/config"
+            ])
         
         return base_paths
     

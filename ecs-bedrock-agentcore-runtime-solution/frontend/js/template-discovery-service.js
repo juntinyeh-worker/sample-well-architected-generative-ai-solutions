@@ -604,11 +604,10 @@ class TemplateDiscoveryService {
             console.warn(`Template may not be properly formatted: ${templatePath}`);
         }
 
-        // Remove any potential security risks using DOM-based sanitization
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(content, 'text/html');
-        doc.querySelectorAll('script, iframe').forEach(el => el.remove());
-        const sanitizedContent = doc.body.textContent || content;
+        // Remove any potential security risks (basic sanitization)
+        const sanitizedContent = content
+            .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+            .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '');
 
         if (sanitizedContent !== content) {
             console.warn(`Removed potentially unsafe content from: ${templatePath}`);

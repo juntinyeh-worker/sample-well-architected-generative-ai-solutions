@@ -1,5 +1,5 @@
 """
-Base model classes for AgentCore runtime.
+Base model classes used by both BedrockAgent and AgentCore versions.
 """
 
 from abc import ABC, abstractmethod

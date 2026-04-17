@@ -1,5 +1,5 @@
 """
-Request logging middleware for AgentCore runtime.
+Request logging middleware for both BedrockAgent and AgentCore versions.
 """
 
 import time
@@ -23,7 +23,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         
         Args:
             app: FastAPI application instance
-            version: Backend version ("agentcore")
+            version: Backend version ("bedrockagent" or "agentcore")
             log_body: Whether to log request/response bodies
             log_headers: Whether to log request/response headers
         """

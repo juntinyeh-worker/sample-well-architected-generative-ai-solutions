@@ -1,5 +1,5 @@
 """
-Logging configuration utilities for AgentCore runtime.
+Logging configuration utilities for both BedrockAgent and AgentCore versions.
 """
 
 import logging
@@ -262,7 +262,7 @@ def configure_version_specific_logging(version: str):
     Configure logging specific to backend version.
     
     Args:
-        version: Backend version ("agentcore")
+        version: Backend version ("bedrockagent" or "agentcore")
     """
     # Add version to all log messages
     root_logger = logging.getLogger()

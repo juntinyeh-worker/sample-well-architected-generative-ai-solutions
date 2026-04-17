@@ -1,1 +1,1 @@
-"""Shared components for AgentCore runtime."""
+"""Shared components used by both BedrockAgent and AgentCore versions."""
