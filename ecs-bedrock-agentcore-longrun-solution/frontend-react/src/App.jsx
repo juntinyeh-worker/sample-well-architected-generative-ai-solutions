@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useMemo } from 'react'
 import AppLayout from '@cloudscape-design/components/app-layout'
 import Container from '@cloudscape-design/components/container'
 import Header from '@cloudscape-design/components/header'
@@ -64,7 +64,7 @@ export default function App() {
                   ))}
                 </SpaceBetween>
               </div>
-              <SpaceBetween direction="horizontal" size="xs">
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
                 <div style={{ flex: 1 }}>
                   <Textarea
                     value={input}
@@ -75,7 +75,7 @@ export default function App() {
                   />
                 </div>
                 <Button variant="primary" onClick={send}>Send</Button>
-              </SpaceBetween>
+              </div>
             </SpaceBetween>
           </Container>
         </SpaceBetween>
@@ -84,15 +84,47 @@ export default function App() {
   )
 }
 
+function renderMarkdown(text) {
+  let html = text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    // code blocks
+    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre style="background:#0f1b2d;padding:10px;border-radius:6px;margin:8px 0;overflow-x:auto;font-size:12px"><code>$2</code></pre>')
+    // inline code
+    .replace(/`([^`]+)`/g, '<code style="background:#0f1b2d;padding:2px 5px;border-radius:3px;font-size:12px">$1</code>')
+    // bold
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    // italic
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    // headers
+    .replace(/^### (.+)$/gm, '<div style="font-size:15px;font-weight:700;margin:10px 0 4px">$1</div>')
+    .replace(/^## (.+)$/gm, '<div style="font-size:16px;font-weight:700;margin:12px 0 4px">$1</div>')
+    .replace(/^# (.+)$/gm, '<div style="font-size:18px;font-weight:700;margin:14px 0 6px">$1</div>')
+    // unordered lists
+    .replace(/^[*-] (.+)$/gm, '<li style="margin-left:16px">$1</li>')
+    // ordered lists
+    .replace(/^\d+\. (.+)$/gm, '<li style="margin-left:16px;list-style-type:decimal">$1</li>')
+    // horizontal rule
+    .replace(/^---$/gm, '<hr style="border:none;border-top:1px solid #555;margin:8px 0">')
+    // line breaks (double newline = paragraph)
+    .replace(/\n\n/g, '<br/><br/>')
+    .replace(/\n/g, '<br/>')
+  return html
+}
+
 function ChatMessage({ message }) {
   const isUser = message.role === 'user'
   const bgColor = isUser ? '#0073bb' : message.type === 'task_error' ? '#1a0000' : '#232f3e'
   const borderLeft = message.type === 'task_complete' ? '3px solid #1d8102' : message.type === 'task_error' ? '3px solid #d13212' : 'none'
 
+  const rendered = useMemo(() => {
+    if (isUser) return null
+    return renderMarkdown(message.text || '')
+  }, [message.text, isUser])
+
   return (
     <div style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start' }}>
-      <div style={{ maxWidth: '75%', padding: '10px 14px', borderRadius: '8px', background: bgColor, color: '#fff', borderLeft, whiteSpace: 'pre-wrap', fontSize: '14px' }}>
-        {message.text}
+      <div style={{ maxWidth: '75%', padding: '10px 14px', borderRadius: '8px', background: bgColor, color: '#fff', borderLeft, fontSize: '14px', lineHeight: '1.6' }}>
+        {isUser ? message.text : <div dangerouslySetInnerHTML={{ __html: rendered }} />}
         {message.data && <pre style={{ marginTop: '8px', padding: '8px', background: '#0f1b2d', borderRadius: '4px', fontSize: '12px', overflow: 'auto' }}>{JSON.stringify(message.data, null, 2)}</pre>}
       </div>
     </div>
