@@ -21,8 +21,8 @@ RUN curl -fsSL https://cli.kiro.dev/install | bash
 # Verify installations
 RUN kiro-cli --version && aws --version
 
-# Install bedrock-agentcore SDK
-RUN pip install --no-cache-dir bedrock-agentcore
+# Install bedrock-agentcore SDK and aws-api-mcp-server
+RUN pip install --no-cache-dir bedrock-agentcore "awslabs.aws-api-mcp-server"
 
 # Copy the HTTP/ACP wrapper
 COPY wrapper.py /app/wrapper.py

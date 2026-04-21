@@ -59,7 +59,7 @@ class KiroACP:
         mcp_env = {"AWS_REGION": os.environ.get("AWS_REGION", "us-west-2")}
         mcp_env.update(creds)
         r = self._call("session/new", {"cwd": "/tmp", "mcpServers": [
-            {"name": "aws-api", "command": "uvx", "args": ["awslabs.aws-api-mcp-server@latest"], "env": mcp_env}
+            {"name": "aws-api", "command": "python3", "args": ["-m", "awslabs.aws_api_mcp_server.server"], "env": mcp_env}
         ]}, timeout=180)
         self.session_id = r.get("result", {}).get("sessionId", "")
         self.ready = True
