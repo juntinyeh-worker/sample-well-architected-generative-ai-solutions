@@ -8,6 +8,8 @@ logger = logging.getLogger(__name__)
 
 AGENTCORE_REGION = os.getenv("AGENTCORE_REGION", "us-west-2")
 RUNTIME_ARN = os.getenv("AGENTCORE_RUNTIME_ARN", "")
+# For the Kiro CLI ACP runtime, set:
+# AGENTCORE_RUNTIME_ARN=arn:aws:bedrock-agentcore:us-west-2:ACCOUNT:runtime/kiro_mcp_agent-XXXXX
 
 
 def _get_client():
