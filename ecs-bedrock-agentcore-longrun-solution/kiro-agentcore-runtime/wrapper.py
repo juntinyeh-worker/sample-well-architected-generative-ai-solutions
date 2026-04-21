@@ -24,7 +24,9 @@ class KiroACP:
         threading.Thread(target=self._reader, daemon=True).start()
         logger.info(f"ACP pid={self.proc.pid}")
         self._call("initialize", {"protocolVersion": 1, "clientCapabilities": {}, "clientInfo": {"name": "agentcore", "version": "0.1"}})
-        resp = self._call("session/new", {"cwd": "/tmp", "mcpServers": []})
+        resp = self._call("session/new", {"cwd": "/tmp", "mcpServers": [
+            {"name": "aws-api", "command": "uvx", "args": ["awslabs.aws-api-mcp-server@latest"], "env": {"AWS_REGION": os.environ.get("AWS_REGION", "us-west-2")}}
+        ]})
         self.session_id = resp.get("result", {}).get("sessionId", "")
         logger.info(f"Session: {self.session_id}")
 
