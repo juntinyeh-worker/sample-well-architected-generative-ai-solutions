@@ -49,6 +49,7 @@ class KiroACP:
         creds = fetch_credentials()
         env = os.environ.copy()
         env.update(creds)
+        self.creds = creds
         self.proc = subprocess.Popen(
             ["kiro-cli", "acp", "--trust-all-tools"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -56,11 +57,8 @@ class KiroACP:
         threading.Thread(target=self._read, daemon=True).start()
         threading.Thread(target=self._log_stderr, daemon=True).start()
         self._call("initialize", {"protocolVersion": 1, "clientCapabilities": {}, "clientInfo": {"name": "agentcore", "version": "0.1"}})
-        mcp_env = {"AWS_REGION": os.environ.get("AWS_REGION", "us-west-2")}
-        mcp_env.update(creds)
-        r = self._call("session/new", {"cwd": "/tmp", "mcpServers": [
-            {"name": "aws-api", "command": "python3", "args": ["-m", "awslabs.aws_api_mcp_server.server"], "env": mcp_env}
-        ]}, timeout=180)
+        # Start without MCP for fast init
+        r = self._call("session/new", {"cwd": "/tmp", "mcpServers": []})
         self.session_id = r.get("result", {}).get("sessionId", "")
         self.ready = True
         logger.info(f"ACP ready, session={self.session_id}")
