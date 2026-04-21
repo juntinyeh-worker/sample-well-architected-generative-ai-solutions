@@ -1,36 +1,75 @@
-"""AgentCore wrapper: HTTP 8080 ↔ Kiro CLI ACP (JSON-RPC over stdio, newline-delimited)."""
-import subprocess, json, os, threading, queue, logging
-from http.server import HTTPServer, BaseHTTPRequestHandler
+"""AgentCore wrapper: BedrockAgentCoreApp SDK + Kiro CLI ACP with async task management."""
+import json, os, subprocess, threading, queue, logging, urllib.request
+from bedrock_agentcore.runtime import BedrockAgentCoreApp
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+app = BedrockAgentCoreApp()
+
+# Store completed results by task_id
+results = {}
+
+
+def fetch_credentials():
+    """Fetch IAM credentials from container metadata."""
+    if os.environ.get("AWS_ACCESS_KEY_ID"):
+        c = {"AWS_ACCESS_KEY_ID": os.environ["AWS_ACCESS_KEY_ID"],
+             "AWS_SECRET_ACCESS_KEY": os.environ["AWS_SECRET_ACCESS_KEY"]}
+        if os.environ.get("AWS_SESSION_TOKEN"):
+            c["AWS_SESSION_TOKEN"] = os.environ["AWS_SESSION_TOKEN"]
+        return c
+    for v in ["AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_CONTAINER_CREDENTIALS_FULL_URI"]:
+        uri = os.environ.get(v)
+        if not uri:
+            continue
+        try:
+            url = f"http://169.254.170.2{uri}" if v.endswith("RELATIVE_URI") else uri
+            h = {}
+            tok = os.environ.get("AWS_CONTAINER_AUTHORIZATION_TOKEN")
+            if tok:
+                h["Authorization"] = tok
+            d = json.loads(urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=5).read())
+            return {"AWS_ACCESS_KEY_ID": d["AccessKeyId"], "AWS_SECRET_ACCESS_KEY": d["SecretAccessKey"], "AWS_SESSION_TOKEN": d["Token"]}
+        except Exception as e:
+            logger.warning(f"Cred fetch failed ({v}): {e}")
+    return {}
+
 
 class KiroACP:
+    """Manages a single kiro-cli ACP process."""
     def __init__(self):
-        self.proc = None
-        self.pending = {}
-        self.chunks = {}  # rid -> list of text chunks
+        self.proc = self.session_id = None
+        self.pending, self.chunks = {}, {}
         self.next_id = 0
         self.lock = threading.Lock()
-        self.session_id = None
+        self.ready = False
 
     def start(self):
+        creds = fetch_credentials()
+        env = os.environ.copy()
+        env.update(creds)
         self.proc = subprocess.Popen(
             ["kiro-cli", "acp", "--trust-all-tools"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, bufsize=1,
-        )
-        threading.Thread(target=self._reader, daemon=True).start()
-        logger.info(f"ACP pid={self.proc.pid}")
+            text=True, bufsize=1, env=env)
+        threading.Thread(target=self._read, daemon=True).start()
+        threading.Thread(target=self._log_stderr, daemon=True).start()
         self._call("initialize", {"protocolVersion": 1, "clientCapabilities": {}, "clientInfo": {"name": "agentcore", "version": "0.1"}})
-        resp = self._call("session/new", {"cwd": "/tmp", "mcpServers": [
-            {"name": "aws-api", "command": "uvx", "args": ["awslabs.aws-api-mcp-server@latest"], "env": {"AWS_REGION": os.environ.get("AWS_REGION", "us-west-2")}}
-        ]})
-        self.session_id = resp.get("result", {}).get("sessionId", "")
-        logger.info(f"Session: {self.session_id}")
+        mcp_env = {"AWS_REGION": os.environ.get("AWS_REGION", "us-west-2")}
+        mcp_env.update(creds)
+        r = self._call("session/new", {"cwd": "/tmp", "mcpServers": [
+            {"name": "aws-api", "command": "uvx", "args": ["awslabs.aws-api-mcp-server@latest"], "env": mcp_env}
+        ]}, timeout=180)
+        self.session_id = r.get("result", {}).get("sessionId", "")
+        self.ready = True
+        logger.info(f"ACP ready, session={self.session_id}")
 
-    def _reader(self):
+    def _log_stderr(self):
+        for line in self.proc.stderr:
+            logger.warning(f"ACP: {line.rstrip()}")
+
+    def _read(self):
         for line in self.proc.stdout:
             line = line.strip()
             if not line:
@@ -39,28 +78,21 @@ class KiroACP:
                 msg = json.loads(line)
             except json.JSONDecodeError:
                 continue
-
-            # Auto-approve permissions
             if msg.get("method") == "session/request_permission":
                 rid = msg.get("id")
-                if rid is not None:
+                if rid:
                     opts = msg.get("params", {}).get("options", [])
                     oid = next((o.get("optionId") for o in opts if o.get("kind") == "allow_always"), "allow_always")
                     self.proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": rid, "result": {"outcome": {"outcome": "selected", "optionId": oid}}}) + "\n")
                     self.proc.stdin.flush()
                 continue
-
-            # Collect streamed text chunks
-            params = msg.get("params", {})
-            update = params.get("update", {})
-            if update.get("sessionUpdate") == "agent_message_chunk":
-                text = update.get("content", {}).get("text", "")
-                if text:
-                    # Add to all active prompt chunk collectors
-                    for rid, chunks in self.chunks.items():
-                        chunks.append(text)
-
-            # Response with id -> resolve pending
+            p = msg.get("params", {})
+            u = p.get("update", {})
+            if u.get("sessionUpdate") == "agent_message_chunk":
+                t = u.get("content", {}).get("text", "")
+                if t:
+                    for chunks in self.chunks.values():
+                        chunks.append(t)
             mid = msg.get("id")
             if mid is not None and mid in self.pending:
                 self.pending[mid].put(msg)
@@ -81,8 +113,8 @@ class KiroACP:
             self.pending.pop(rid, None)
 
     def prompt(self, text):
-        if not self.session_id:
-            return "No session"
+        if not self.ready or not self.session_id:
+            return "(agent not ready)"
         with self.lock:
             self.next_id += 1
             rid = self.next_id
@@ -90,46 +122,60 @@ class KiroACP:
         self.pending[rid] = q
         self.chunks[rid] = []
         self.proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": rid, "method": "session/prompt", "params": {
-            "sessionId": self.session_id,
-            "prompt": [{"type": "text", "text": text}],
-        }}) + "\n")
+            "sessionId": self.session_id, "prompt": [{"type": "text", "text": text}]}}) + "\n")
         self.proc.stdin.flush()
         try:
-            q.get(timeout=120)  # Wait for final response
+            q.get(timeout=300)
         except queue.Empty:
             pass
         finally:
             self.pending.pop(rid, None)
-        text_chunks = self.chunks.pop(rid, [])
-        return "".join(text_chunks) or "(no response)"
-
-    def is_alive(self):
-        return self.proc and self.proc.poll() is None
+        return "".join(self.chunks.pop(rid, [])) or "(no response)"
 
 
 acp = KiroACP()
 
 
-class Handler(BaseHTTPRequestHandler):
-    def do_POST(self):
-        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0)))) if int(self.headers.get("Content-Length", 0)) else {}
-        if not acp.is_alive():
-            acp.start()
-        response = acp.prompt(body.get("input", "hello"))
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps({"response": response}).encode())
+def init_acp():
+    """Initialize ACP in background thread."""
+    try:
+        acp.start()
+    except Exception as e:
+        logger.error(f"ACP init failed: {e}")
 
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps({"status": "ok" if acp.is_alive() else "starting"}).encode())
+
+@app.entrypoint
+def main(payload):
+    """Handle incoming requests. Returns immediately for long-running tasks."""
+    user_input = payload.get("input", payload.get("prompt", ""))
+
+    # Check for result polling
+    check_task = payload.get("check_task")
+    if check_task:
+        if check_task in results:
+            return {"status": "complete", "task_id": check_task, "response": results.pop(check_task)}
+        return {"status": "processing", "task_id": check_task}
+
+    if not acp.ready:
+        return {"status": "initializing", "response": "Agent is starting up, please retry in a moment."}
+
+    # Start async task
+    task_id = app.add_async_task("kiro_prompt")
+
+    def run():
+        try:
+            result = acp.prompt(user_input)
+            results[task_id] = result
+        except Exception as e:
+            results[task_id] = f"Error: {e}"
+        finally:
+            app.complete_async_task(task_id)
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"status": "accepted", "task_id": task_id, "response": f"Working on your request..."}
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "8080"))
-    acp.start()
-    logger.info(f"Wrapper on :{port}")
-    HTTPServer(("0.0.0.0", port), Handler).serve_forever()
+    logger.info("Starting AgentCore wrapper with async task management")
+    threading.Thread(target=init_acp, daemon=True).start()
+    app.run()
