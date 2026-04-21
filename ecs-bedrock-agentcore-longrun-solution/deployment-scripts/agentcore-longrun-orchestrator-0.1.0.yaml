@@ -9,9 +9,10 @@ Parameters:
   SourceBucket:
     Type: String
     Description: S3 bucket for source code
-  AgentCoreRuntimeArn:
+  KiroApiKey:
     Type: String
-    Description: ARN of the Bedrock AgentCore Runtime to invoke
+    Description: Kiro CLI API key for the AgentCore runtime
+    NoEcho: true
   BedrockRegion:
     Type: String
     Default: us-west-2
@@ -158,7 +159,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - bedrock-agentcore:InvokeAgentRuntime
-                Resource: !Ref AgentCoreRuntimeArn
+                Resource: !GetAtt AgentCoreRuntime.AgentRuntimeArn
               - Effect: Allow
                 Action:
                   - bedrock:InvokeModel
@@ -182,7 +183,7 @@ Resources:
             - ContainerPort: 8000
           Environment:
             - Name: AGENTCORE_RUNTIME_ARN
-              Value: !Ref AgentCoreRuntimeArn
+              Value: !GetAtt AgentCoreRuntime.AgentRuntimeArn
             - Name: BEDROCK_REGION
               Value: !Ref BedrockRegion
             - Name: AGENTCORE_REGION
@@ -298,6 +299,127 @@ Resources:
               Headers: ['*']
             DefaultTTL: 0
 
+  # Agent Container Build Pipeline
+  AgentECRRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub '${AWS::StackName}-agent'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"untagged","countType":"imageCountMoreThan","countNumber":3},"action":{"type":"expire"}}]}'
+
+  AgentBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AgentBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                Resource: !GetAtt AgentECRRepo.Arn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub 'arn:aws:s3:::${SourceBucket}/*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  AgentBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${AWS::StackName}-agent-build'
+      ServiceRole: !GetAtt AgentBuildRole.Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: ARM_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-aarch64-standard:3.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: ECR_REPO
+            Value: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AgentECRRepo}'
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
+      Source:
+        Type: S3
+        Location: !Sub '${SourceBucket}/agent-source.zip'
+        BuildSpec: deployment-scripts/buildspecs/agent-buildspec.yml
+      TimeoutInMinutes: 15
+
+  # AgentCore Runtime
+  AgentCoreRuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AgentCoreRuntimePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchCheckLayerAvailability
+                Resource: !GetAtt AgentECRRepo.Arn
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: '*'
+
+  AgentCoreRuntime:
+    Type: AWS::BedrockAgentCore::Runtime
+    DependsOn: AgentBuildProject
+    Properties:
+      AgentRuntimeName: !Sub '${AWS::StackName}_agent'
+      Description: Kiro CLI agent runtime for Cloud Operations Assistant
+      RoleArn: !GetAtt AgentCoreRuntimeRole.Arn
+      AgentRuntimeArtifact:
+        ContainerConfiguration:
+          ContainerUri: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AgentECRRepo}:latest'
+      NetworkConfiguration:
+        NetworkMode: PUBLIC
+      ProtocolConfiguration: HTTP
+      EnvironmentVariables:
+        KIRO_API_KEY: !Ref KiroApiKey
+
   # Frontend Build Pipeline
   FrontendBuildRole:
     Type: AWS::IAM::Role
@@ -370,3 +492,7 @@ Outputs:
     Value: !Ref UserPoolClient
   StaticBucket:
     Value: !Ref StaticBucket
+  AgentCoreRuntimeArn:
+    Value: !GetAtt AgentCoreRuntime.AgentRuntimeArn
+  AgentECRRepo:
+    Value: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AgentECRRepo}'
