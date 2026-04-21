@@ -33,10 +33,12 @@ def create_orchestrator_app() -> FastAPI:
         return {"status": "healthy", "mode": "agentcore-longrun", "timestamp": datetime.utcnow().isoformat()}
 
     @app.get("/")
+    @app.get("/api/orchestrator")
     async def root():
         return {"service": "agentcore-longrun-orchestrator", "version": "0.1.0"}
 
     @app.websocket("/ws")
+    @app.websocket("/api/orchestrator/ws")
     async def websocket_endpoint(ws: WebSocket):
         await ws.accept()
         session_id = str(uuid.uuid4())[:8]
