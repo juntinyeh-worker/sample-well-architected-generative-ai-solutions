@@ -383,6 +383,8 @@ Resources:
             Principal:
               Service: bedrock-agentcore.amazonaws.com
             Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
       Policies:
         - PolicyName: AgentCoreRuntimePolicy
           PolicyDocument:
