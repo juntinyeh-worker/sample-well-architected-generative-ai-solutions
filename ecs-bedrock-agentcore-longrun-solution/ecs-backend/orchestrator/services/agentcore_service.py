@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 AGENTCORE_REGION = os.getenv("AGENTCORE_REGION", "us-west-2")
 RUNTIME_ARN = os.getenv("AGENTCORE_RUNTIME_ARN", "")
 
-DEMO_DISCLAIMER = "\n\n---\n*Some resource identifiers have been partially masked for this demo.*"
+DEMO_DISCLAIMER = "\n\n---\n*Some resource identifiers and names have been partially masked for this demo.*"
 
 # Patterns: prefix-hex/alphanum IDs where we mask 2 chars before the last char
 _ID_PATTERNS = re.compile(
@@ -34,18 +34,72 @@ _ID_PATTERNS = re.compile(
     r')\b'
 )
 
+# Patterns that capture resource names in common AWS output contexts
+_NAME_PATTERNS = re.compile(
+    r'(?:'
+    # "Name: my-resource" or "Name=my-resource"
+    r'(?:Name|name|InstanceName|BucketName|FunctionName|ClusterName|TableName|StackName|DBInstanceIdentifier|LogGroup|GroupName|KeyName|RoleName|TopicName|QueueName)'
+    r'[\s]*[:=]\s*'
+    r'([A-Za-z0-9/][A-Za-z0-9._/:-]{2,})'
+    r'|'
+    # ARN: arn:aws:service:region:account:type/name
+    r'arn:aws:[a-z0-9-]+:[a-z0-9-]*:[0-9*]*:[a-z-]*/([A-Za-z0-9][A-Za-z0-9._/-]{2,})'
+    r'|'
+    # ARN: arn:aws:service:region:account:type:name
+    r'arn:aws:[a-z0-9-]+:[a-z0-9-]*:[0-9*]*:[a-z-]+:([A-Za-z0-9][A-Za-z0-9._/-]{2,})'
+    r'|'
+    # "named X" / "called X"
+    r'(?:named|called)\s+`?([A-Za-z0-9][A-Za-z0-9._/-]{2,})`?'
+    r'|'
+    # **Name** bold markdown
+    r'\*\*([A-Za-z0-9][A-Za-z0-9._/-]{2,})\*\*'
+    r')'
+)
+
+# Words that look like resource names but are actually generic terms — skip these
+_NAME_SKIP = {
+    'true', 'false', 'null', 'none', 'yes', 'no', 'enabled', 'disabled',
+    'active', 'inactive', 'running', 'stopped', 'terminated', 'pending',
+    'available', 'error', 'healthy', 'unhealthy', 'default', 'custom',
+    'public', 'private', 'internal', 'external', 'standard', 'Name',
+    'the', 'and', 'for', 'with', 'from', 'that', 'this', 'are', 'was',
+    'not', 'but', 'all', 'can', 'has', 'have', 'will', 'been', 'each',
+    'Result', 'Here', 'following', 'below', 'above', 'Summary',
+}
+
+
+def _mask_name(name: str) -> str:
+    """Mask middle portion of a resource name, keeping first 3 and last 1 chars."""
+    if len(name) <= 5:
+        return name[:2] + '**' + name[-1]
+    return name[:3] + '***' + name[-1]
+
 
 def _mask_ids(text: str) -> tuple[str, bool]:
-    """Mask 2 chars before the last char in resource IDs. Returns (masked_text, had_matches)."""
+    """Mask resource IDs and names. Returns (masked_text, had_matches)."""
     found = False
-    def _replace(m):
+
+    def _replace_id(m):
         nonlocal found
         found = True
         v = m.group(0)
         if len(v) >= 4:
             return v[:-3] + '**' + v[-1]
         return v
-    masked = _ID_PATTERNS.sub(_replace, text)
+
+    def _replace_name(m):
+        nonlocal found
+        # find which capture group matched
+        name = next((g for g in m.groups() if g), None)
+        if not name or name.lower() in {s.lower() for s in _NAME_SKIP}:
+            return m.group(0)
+        if len(name) < 3:
+            return m.group(0)
+        found = True
+        return m.group(0).replace(name, _mask_name(name))
+
+    masked = _ID_PATTERNS.sub(_replace_id, text)
+    masked = _NAME_PATTERNS.sub(_replace_name, masked)
     return masked, found
 
 
