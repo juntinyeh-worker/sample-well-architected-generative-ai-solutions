@@ -106,7 +106,7 @@ header h1{font-size:16px;color:#fff;font-weight:600}
 <script src="/config.js"></script>
 <script>
 const chatEl=document.getElementById('chat-messages'),inputEl=document.getElementById('input'),taskListEl=document.getElementById('task-list'),taskCountEl=document.getElementById('task-count'),panel=document.getElementById('task-panel'),statusDot=document.getElementById('status-dot'),statusText=document.getElementById('status-text');
-const tasks={};let ws,lastUserMsg='',pendingName='';
+const tasks={};const pendingAcks=[];let ws,lastUserMsg='';
 
 function connect(){
   const proto=location.protocol==='https:'?'wss:':'ws:';
@@ -137,6 +137,7 @@ inputEl.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preven
 function briefName(msg){
   const w=msg.replace(/[?!.,]+/g,'').trim().split(/\s+/);
   if(w.length<=4)return w.map(s=>s[0].toUpperCase()+s.slice(1)).join(' ');
+  // pick key words: skip filler
   const skip=new Set(['what','whats','what\'s','is','my','the','a','an','can','you','me','please','do','how','are','i','to','of','for','in','on','about']);
   const key=w.filter(s=>!skip.has(s.toLowerCase())).slice(0,4);
   return (key.length?key:w.slice(0,3)).map(s=>s[0].toUpperCase()+s.slice(1)).join(' ');
@@ -146,22 +147,21 @@ function handleMsg(m){
   switch(m.type){
     case 'ack':
       addChat('ai ack',m.message);
-      pendingName=briefName(lastUserMsg);
-      break;
-    case 'task_started':
-      // backend sends real task_id — create the task item immediately with correct ID
-      const name=pendingName||'Task';
-      tasks[m.task_id]={status:'running',name:name,text:'',data:null};
-      renderTaskItem(m.task_id);
+      // create placeholder task immediately
+      const pId='pending-'+Date.now();
+      const name=briefName(lastUserMsg);
+      tasks[pId]={status:'running',name:name,text:'',data:null};
+      pendingAcks.push(pId);
+      renderTaskItem(pId);
       break;
     case 'chat':
       addChat('ai',m.message);
       break;
     case 'task_complete':
-      updateTask(m.task_id,'done',m.brief||m.message,m.data);
+      resolveTask(m.task_id,'done',m.brief||m.message,m.data);
       break;
     case 'task_error':
-      updateTask(m.task_id,'error',m.message);
+      resolveTask(m.task_id,'error',m.message);
       break;
     case 'detail':
       resolveTask(m.task_id,'done',null,m.data);
@@ -182,14 +182,29 @@ function addChat(cls,text){
 
 function tryExample(el){inputEl.value=el.childNodes[el.childNodes.length-1].textContent.trim();send()}
 
-// Update a task that already exists by its real ID
-function updateTask(id,status,text,data){
-  if(!tasks[id]){
-    // fallback: task_started was missed, create it now
-    tasks[id]={status:'running',name:'Task',text:'',data:null};
+// Bind a real task_id to a pending placeholder, or create new if none pending
+function resolveTask(id,status,text,data){
+  let t;
+  if(tasks[id]){
+    // already known (e.g. detail/brief update)
+    t=tasks[id];
+  }else if(pendingAcks.length){
+    // bind to oldest pending placeholder
+    const pId=pendingAcks.shift();
+    const old=tasks[pId];
+    delete tasks[pId];
+    // re-key under real id, keep the name
+    t={...old,status:'running'};
+    tasks[id]=t;
+    // swap DOM id
+    const el=document.getElementById('task-'+pId);
+    if(el){el.id='task-'+id;el.querySelector('.task-row').setAttribute('onclick',`toggleTask('${id}')`)}
+  }else{
+    // no pending placeholder — create fresh
+    t={status:'running',name:'Task',text:'',data:null};
+    tasks[id]=t;
     renderTaskItem(id);
   }
-  const t=tasks[id];
   t.status=status;
   if(text!=null)t.text=text;
   if(data!=null)t.data=data;
@@ -200,7 +215,7 @@ function renderTaskItem(id){
   const t=tasks[id];
   const item=document.createElement('div');
   item.className='task-item';item.id='task-'+id;
-  item.innerHTML=`<div class="task-row" onclick="toggleTask('${id}')"><div class="task-icon"><div class="spinner"></div></div><div class="task-label">${esc(t.name)} (${id})</div><span class="task-chevron">▶</span></div><div class="task-body"></div>`;
+  item.innerHTML=`<div class="task-row" onclick="toggleTask('${id}')"><div class="task-icon"><div class="spinner"></div></div><div class="task-label">${esc(t.name)} (...)</div><span class="task-chevron">▶</span></div><div class="task-body"></div>`;
   taskListEl.prepend(item);
   updateCount();
   if(panel.classList.contains('collapsed'))togglePanel();
@@ -212,7 +227,7 @@ function refreshTaskUI(id){
   const icon=el.querySelector('.task-icon');
   const label=el.querySelector('.task-label');
   const body=el.querySelector('.task-body');
-  const displayId=id;
+  const displayId=id.startsWith('pending-')?'...':id;
   if(t.status==='done'){
     icon.innerHTML='<div class="dot-green"></div>';
     label.textContent=t.name+' ('+displayId+')';
