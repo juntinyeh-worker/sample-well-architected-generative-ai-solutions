@@ -26,6 +26,10 @@ Parameters:
     Default: 'false'
     AllowedValues: ['true', 'false']
     Description: Restrict agent to read-only operations (for demo/sandbox)
+  AgentCoreMemoryId:
+    Type: String
+    Default: ''
+    Description: AgentCore Memory resource ID (leave empty to disable memory)
 
 Resources:
   # Cognito
@@ -202,6 +206,8 @@ Resources:
               Value: !Ref DemoMaskOutput
             - Name: DEMO_READ_ONLY
               Value: !Ref DemoReadOnly
+            - Name: AGENTCORE_MEMORY_ID
+              Value: !Ref AgentCoreMemoryId
           LogConfiguration:
             LogDriver: awslogs
             Options:

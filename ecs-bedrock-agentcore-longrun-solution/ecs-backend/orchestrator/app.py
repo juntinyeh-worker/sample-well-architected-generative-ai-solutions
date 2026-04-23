@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from orchestrator.services.intent_service import parse_intent
 from orchestrator.services.agentcore_service import invoke_agentcore_runtime
+from orchestrator.services import memory_service
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +126,10 @@ def create_orchestrator_app() -> FastAPI:
                 if tools_to_run:
                     await ws.send_json({"type": "ack", "message": ack})
                     user_input = intent.get("input", user_text)
+                    # Prepend relevant memory context if available
+                    mem_context = memory_service.retrieve_context(session_id, session_id, user_input)
+                    if mem_context:
+                        user_input = mem_context + user_input
                     for tool_name in tools_to_run:
                         task_id = str(uuid.uuid4())[:8]
                         task = {"id": task_id, "tool": tool_name, "status": "running", "started": datetime.utcnow().isoformat()}
@@ -152,6 +157,7 @@ async def _run_task(task_id: str, user_input: str, ws: WebSocket, session: dict)
         task["brief"] = brief
         task["completed"] = datetime.utcnow().isoformat()
         _save_session(session)
+        memory_service.write_turns(session["id"], session["id"], user_input, brief)
         await ws.send_json({
             "type": "task_complete",
             "task_id": task_id,
