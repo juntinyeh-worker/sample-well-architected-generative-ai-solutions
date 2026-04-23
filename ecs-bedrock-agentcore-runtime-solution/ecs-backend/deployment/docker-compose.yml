@@ -1,0 +1,29 @@
+# COA AgentCore Runtime Docker Compose Configuration
+
+version: '3.8'
+
+services:
+  coa-agentcore:
+    build:
+      context: ..
+      dockerfile: deployment/agentcore.dockerfile
+    container_name: coa-agentcore
+    ports:
+      - "8000:8000"
+    environment:
+      - LOG_LEVEL=INFO
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}
+      - PARAM_PREFIX=${PARAM_PREFIX:-coa}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+# Usage:
+#   docker-compose up -d

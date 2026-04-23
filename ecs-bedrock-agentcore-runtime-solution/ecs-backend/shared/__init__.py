@@ -1,0 +1,1 @@
+"""Shared components for AgentCore runtime."""
