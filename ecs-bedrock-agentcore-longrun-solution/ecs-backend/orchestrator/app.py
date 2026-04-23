@@ -129,6 +129,7 @@ def create_orchestrator_app() -> FastAPI:
                         task_id = str(uuid.uuid4())[:8]
                         task = {"id": task_id, "tool": tool_name, "status": "running", "started": datetime.utcnow().isoformat()}
                         session["tasks"].append(task)
+                        await ws.send_json({"type": "task_started", "task_id": task_id})
                         asyncio.create_task(_run_task(task_id, user_input, ws, session))
                 elif ack:
                     await ws.send_json({"type": "chat", "message": ack})
