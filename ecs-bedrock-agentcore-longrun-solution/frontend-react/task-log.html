@@ -44,6 +44,9 @@ header a:hover{text-decoration:underline}
 .task-card-body.open{display:block}
 .task-card-body pre{background:#0a1220;padding:8px;border-radius:4px;overflow-x:auto;font-size:12px;margin:4px 0;white-space:pre-wrap}
 .task-card .timestamps{font-size:11px;color:#6b7280;margin-top:6px}
+.task-card .task-response{line-height:1.7}
+.task-card .task-response li{margin:2px 0}
+.task-card .task-response strong{color:#e0e0e0}
 .section-label{font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px;font-weight:600}
 </style>
 </head>
@@ -99,16 +102,16 @@ async function loadSession(sid,date){
     // Chat history
     if(s.history&&s.history.length){
       html+=`<div class="section-label">Chat History</div>`;
-      s.history.forEach(h=>{html+=`<div class="history-item ${h.role==='user'?'user':'ai'}">${esc(h.text)}</div>`});
+      s.history.forEach(h=>{html+=`<div class="history-item ${h.role==='user'?'user':'ai'}">${h.role==='user'?esc(h.text):renderMd(h.text)}</div>`});
     }
     // Tasks
     if(s.tasks&&s.tasks.length){
       html+=`<div class="section-label">Tasks (${s.tasks.length})</div>`;
       s.tasks.forEach((t,i)=>{
         const st=t.status||'running';
+        const resp=t.result?.response||t.brief||'';
         html+=`<div class="task-card"><div class="task-card-header" onclick="toggleCard(${i})"><div class="dot ${st}"></div><div class="tname">${esc(t.tool||'task')} — ${st}</div><div class="tid">${esc(t.id)}</div><span class="tchevron" id="chev-${i}">▶</span></div><div class="task-card-body" id="tbody-${i}">`;
-        if(t.brief)html+=`<div>${esc(t.brief)}</div>`;
-        if(t.result)html+=`<pre>${esc(JSON.stringify(t.result,null,2))}</pre>`;
+        if(resp)html+=`<div class="task-response">${renderMd(resp)}</div>`;
         if(t.error)html+=`<div style="color:#ef4444">${esc(t.error)}</div>`;
         html+=`<div class="timestamps">Started: ${t.started||'N/A'}${t.completed?' · Completed: '+t.completed:''}</div>`;
         html+=`</div></div>`;
@@ -124,6 +127,21 @@ function toggleCard(i){
 }
 
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+
+function renderMd(text){
+  return esc(text)
+    .replace(/```(\w*)\n([\s\S]*?)```/g,'<pre style="background:#0a1220;padding:10px;border-radius:6px;margin:8px 0;overflow-x:auto;font-size:12px"><code>$2</code></pre>')
+    .replace(/`([^`]+)`/g,'<code style="background:#0a1220;padding:2px 5px;border-radius:3px;font-size:12px">$1</code>')
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g,'<em>$1</em>')
+    .replace(/^### (.+)$/gm,'<div style="font-size:14px;font-weight:700;margin:10px 0 4px">$1</div>')
+    .replace(/^## (.+)$/gm,'<div style="font-size:15px;font-weight:700;margin:12px 0 4px">$1</div>')
+    .replace(/^# (.+)$/gm,'<div style="font-size:16px;font-weight:700;margin:14px 0 6px">$1</div>')
+    .replace(/^[*-] (.+)$/gm,'<li style="margin-left:16px">$1</li>')
+    .replace(/^\d+\. (.+)$/gm,'<li style="margin-left:16px;list-style-type:decimal">$1</li>')
+    .replace(/^---$/gm,'<hr style="border:none;border-top:1px solid #555;margin:8px 0">')
+    .replace(/\n\n/g,'<br/><br/>').replace(/\n/g,'<br/>');
+}
 
 loadSessions();
 </script>
