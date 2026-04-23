@@ -13,7 +13,7 @@ header h1{font-size:16px;color:#fff;font-weight:600}
 #status .dot{width:8px;height:8px;border-radius:50%}
 .main{flex:1;display:flex;overflow:hidden}
 /* Chat area */
-.chat-panel{flex:1;display:flex;flex-direction:column;min-width:0}
+.chat-panel{flex:1;display:flex;flex-direction:column;min-width:0;width:50%}
 #chat-messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
 .msg{max-width:78%;padding:10px 14px;border-radius:8px;font-size:14px;line-height:1.6;word-wrap:break-word}
 .msg.user{align-self:flex-end;background:#0073bb;color:#fff}
@@ -27,7 +27,7 @@ header h1{font-size:16px;color:#fff;font-weight:600}
 .input-bar button{background:#0073bb;color:#fff;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;font-size:14px;font-weight:500}
 .input-bar button:hover{background:#005a94}
 /* Task panel */
-.task-panel{width:360px;background:#161e2d;border-left:1px solid #2a3a50;display:flex;flex-direction:column;transition:width .2s}
+.task-panel{width:50%;background:#161e2d;border-left:1px solid #2a3a50;display:flex;flex-direction:column;transition:width .2s}
 .task-panel.collapsed{width:40px}
 .task-header{padding:10px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #2a3a50;min-height:44px}
 .task-header h2{font-size:14px;color:#fff;font-weight:600;white-space:nowrap}
@@ -53,7 +53,12 @@ header h1{font-size:16px;color:#fff;font-weight:600}
 .task-body pre{background:#0a1220;padding:8px;border-radius:4px;overflow-x:auto;font-size:12px;margin:4px 0;white-space:pre-wrap}
 /* welcome */
 .welcome{padding:24px;max-width:640px;margin:auto}
-.welcome h2{color:#fff;font-size:20px;margin-bottom:6px}
+.welcome h2{color:#fff;font-size:20px;margin-bottom:6px;cursor:pointer;display:flex;align-items:center;gap:8px;user-select:none}
+.welcome h2:hover{color:#93c5fd}
+.welcome h2 .chevron{font-size:12px;color:#6b7280;transition:transform .15s}
+.welcome h2 .chevron.open{transform:rotate(90deg)}
+.welcome .welcome-body{overflow:hidden;transition:max-height .3s ease}
+.welcome .welcome-body.collapsed{max-height:0!important}
 .welcome .desc{color:#9ca3af;font-size:14px;line-height:1.6;margin-bottom:16px}
 .welcome .examples{display:flex;flex-direction:column;gap:8px;margin-bottom:18px}
 .welcome .ex{background:#1a2740;border:1px solid #2a3a50;border-radius:8px;padding:10px 14px;cursor:pointer;color:#d1d5db;font-size:13px;transition:border-color .15s}
@@ -71,7 +76,8 @@ header h1{font-size:16px;color:#fff;font-weight:600}
   <div class="chat-panel">
     <div id="chat-messages">
       <div class="welcome" id="welcome">
-        <h2>Welcome to Cloud Operation Assistant</h2>
+        <h2 onclick="toggleWelcome()"><span class="chevron open" id="welcome-chevron">▶</span> Welcome to Cloud Operation Assistant</h2>
+        <div class="welcome-body" id="welcome-body">
         <p class="desc">Your AI-powered assistant for AWS cloud operations. Ask questions about your infrastructure, inspect resources, review costs, and troubleshoot issues — all through natural language.</p>
         <div class="examples">
           <div class="ex" onclick="tryExample(this)"><span>💰 Cost &amp; Billing</span>What's my current billing status?</div>
@@ -82,6 +88,7 @@ header h1{font-size:16px;color:#fff;font-weight:600}
           <div class="ex" onclick="tryExample(this)"><span>📦 Storage &amp; Compliance</span>List all S3 buckets that have public access enabled and check if server-side encryption is configured</div>
         </div>
         <div class="note">📌 <strong>Multi-Account Support</strong> — This assistant can operate across multiple AWS accounts with a given IAM Role and required configuration. Contact your administrator to set up cross-account access.</div>
+        </div>
       </div>
     </div>
     <div class="input-bar">
@@ -168,12 +175,19 @@ function handleMsg(m){
 }
 
 function addChat(cls,text){
-  const w=document.getElementById('welcome');if(w)w.remove();
+  const wb=document.getElementById('welcome-body');
+  const wc=document.getElementById('welcome-chevron');
+  if(wb&&!wb.classList.contains('collapsed')){wb.classList.add('collapsed');if(wc)wc.classList.remove('open')}
   const d=document.createElement('div');
   d.className='msg '+cls;
   d.innerHTML=cls.startsWith('ai')?renderMd(text):esc(text);
   chatEl.appendChild(d);
   chatEl.scrollTop=chatEl.scrollHeight;
+}
+
+function toggleWelcome(){
+  const b=document.getElementById('welcome-body'),c=document.getElementById('welcome-chevron');
+  if(b){b.classList.toggle('collapsed');c.classList.toggle('open')}
 }
 
 function tryExample(el){inputEl.value=el.childNodes[el.childNodes.length-1].textContent.trim();send()}
