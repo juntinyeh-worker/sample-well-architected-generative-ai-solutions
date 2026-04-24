@@ -1,0 +1,181 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AgentCore Long-Running Orchestrator — IAM Roles & AgentCore Runtime (prerequisites)'
+
+# Deploy this stack ONCE with iam:CreateRole + bedrock-agentcore:CreateWorkloadIdentity permissions.
+# The main orchestrator stack references these outputs as parameters.
+
+Parameters:
+  StackPrefix:
+    Type: String
+    Default: agentcore-longrun
+    Description: Prefix matching the main orchestrator stack name
+  SourceBucket:
+    Type: String
+    Description: S3 bucket for source code (used in build role policies)
+  KiroApiKey:
+    Type: String
+    NoEcho: true
+    Description: Kiro CLI API key for the AgentCore runtime
+  AgentContainerUri:
+    Type: String
+    Description: ECR URI for the agent container image (e.g. 123456789.dkr.ecr.us-west-2.amazonaws.com/repo:latest)
+
+Resources:
+  # --- ECS Roles ---
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${StackPrefix}-task-execution-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${StackPrefix}-task-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AgentCoreAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:InvokeAgentRuntime
+                Resource: !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/*'
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: '*'
+
+  # --- CodeBuild Roles ---
+  BuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${StackPrefix}-build-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: BuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                Resource: !Sub 'arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${StackPrefix}-*'
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub 'arn:aws:s3:::${SourceBucket}/*'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::${StackPrefix}-static-${AWS::AccountId}'
+                  - !Sub 'arn:aws:s3:::${StackPrefix}-static-${AWS::AccountId}/*'
+              - Effect: Allow
+                Action: cloudfront:CreateInvalidation
+                Resource: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  # --- AgentCore Runtime ---
+  AgentCoreRuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${StackPrefix}-agentcore-runtime-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+      Policies:
+        - PolicyName: RuntimePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchCheckLayerAvailability
+                Resource: !Sub 'arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${StackPrefix}-*'
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: '*'
+
+  AgentCoreRuntime:
+    Type: AWS::BedrockAgentCore::Runtime
+    Properties:
+      AgentRuntimeName: !Join ['_', !Split ['-', !Sub '${StackPrefix}_agent']]
+      Description: Kiro CLI agent runtime for Cloud Operations Assistant
+      RoleArn: !GetAtt AgentCoreRuntimeRole.Arn
+      AgentRuntimeArtifact:
+        ContainerConfiguration:
+          ContainerUri: !Ref AgentContainerUri
+      NetworkConfiguration:
+        NetworkMode: PUBLIC
+      ProtocolConfiguration: HTTP
+      EnvironmentVariables:
+        KIRO_API_KEY: !Ref KiroApiKey
+
+Outputs:
+  TaskExecutionRoleArn:
+    Value: !GetAtt TaskExecutionRole.Arn
+    Export:
+      Name: !Sub '${StackPrefix}-TaskExecutionRoleArn'
+  TaskRoleArn:
+    Value: !GetAtt TaskRole.Arn
+    Export:
+      Name: !Sub '${StackPrefix}-TaskRoleArn'
+  BuildRoleArn:
+    Value: !GetAtt BuildRole.Arn
+    Export:
+      Name: !Sub '${StackPrefix}-BuildRoleArn'
+  AgentCoreRuntimeArn:
+    Value: !GetAtt AgentCoreRuntime.AgentRuntimeArn
+    Export:
+      Name: !Sub '${StackPrefix}-AgentCoreRuntimeArn'

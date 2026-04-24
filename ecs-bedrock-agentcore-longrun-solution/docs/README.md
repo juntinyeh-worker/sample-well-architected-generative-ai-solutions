@@ -51,18 +51,50 @@ AI:   [full detail response]
 ## Prerequisites
 
 - AWS Account with Bedrock access
-- A deployed AgentCore Runtime (ARN required)
 - Python 3.11+
-- Docker (for container builds)
+- AWS CLI configured
 
 ## Deployment
+
+The solution uses a two-stack model to work within restricted IAM permission boundaries:
+
+| Stack | Template | Requires | Creates |
+|-------|----------|----------|---------|
+| `*-prereqs` | `prerequisites.yaml` | `iam:CreateRole`, `bedrock-agentcore:CreateWorkloadIdentity` | IAM roles, AgentCore runtime |
+| main | `orchestrator-0.2.0.yaml` | Standard deploy permissions (no IAM creation) | VPC, ECS, ALB, CloudFront, CodeBuild |
+
+### Full deploy (admin — has iam:CreateRole)
 
 ```bash
 cd deployment-scripts
 python deploy.py \
-  --stack-name agentcore-longrun \
+  --stack-name sandbox-longrun \
   --region us-west-2 \
-  --runtime-arn arn:aws:bedrock-agentcore:us-west-2:ACCOUNT:runtime/YOUR_RUNTIME_ID
+  --kiro-api-key "ksk_..." \
+  --demo-mask-output true \
+  --demo-read-only true
+```
+
+The script automatically creates the prerequisites stack, builds the backend image, and deploys the orchestrator.
+
+### Restricted deploy (no iam:CreateRole)
+
+If the prerequisites stack already exists, the script reuses it:
+
+```bash
+python deploy.py --stack-name sandbox-longrun --region us-west-2
+```
+
+Or pass existing role ARNs directly:
+
+```bash
+python deploy.py \
+  --stack-name sandbox-longrun \
+  --region us-west-2 \
+  --task-execution-role-arn arn:aws:iam::ACCOUNT:role/EXEC_ROLE \
+  --task-role-arn arn:aws:iam::ACCOUNT:role/TASK_ROLE \
+  --build-role-arn arn:aws:iam::ACCOUNT:role/BUILD_ROLE \
+  --runtime-arn arn:aws:bedrock-agentcore:us-west-2:ACCOUNT:runtime/ID
 ```
 
 ## Local Development
