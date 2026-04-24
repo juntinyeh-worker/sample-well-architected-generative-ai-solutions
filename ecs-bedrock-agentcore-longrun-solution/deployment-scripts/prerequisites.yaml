@@ -7,8 +7,8 @@ Description: 'AgentCore Long-Running Orchestrator — IAM Roles & AgentCore Runt
 Parameters:
   StackPrefix:
     Type: String
-    Default: agentcore-longrun
-    Description: Prefix matching the main orchestrator stack name
+    Default: sandbox-longrun
+    Description: Must start with 'sandbox-' to match IAM permission boundary. Must match the main orchestrator stack name.
   SourceBucket:
     Type: String
     Description: S3 bucket for source code (used in build role policies)

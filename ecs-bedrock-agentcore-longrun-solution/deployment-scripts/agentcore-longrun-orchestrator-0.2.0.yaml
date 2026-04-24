@@ -4,6 +4,7 @@ Description: 'AgentCore Long-Running Orchestrator - ECS + Bedrock AgentCore Runt
 # Requires prerequisites.yaml to be deployed first (IAM roles + AgentCore runtime).
 # This template only creates resources that don't need iam:CreateRole or
 # bedrock-agentcore:CreateWorkloadIdentity.
+# IMPORTANT: Stack name MUST start with 'sandbox-' (IAM permission boundary).
 
 Parameters:
   Environment:

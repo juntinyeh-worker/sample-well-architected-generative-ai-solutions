@@ -22,7 +22,7 @@ SOLUTION_DIR = os.path.dirname(SCRIPT_DIR)
 
 def get_args():
     p = argparse.ArgumentParser(description="Deploy AgentCore Long-Running Orchestrator")
-    p.add_argument("--stack-name", default="agentcore-longrun")
+    p.add_argument("--stack-name", default="sandbox-longrun")
     p.add_argument("--region", default="us-west-2")
     p.add_argument("--environment", default="prod", choices=["dev", "staging", "prod"])
     p.add_argument("--kiro-api-key", help="Kiro CLI API key (required for first deploy)")
@@ -229,6 +229,10 @@ def main():
     account = boto3.client("sts").get_caller_identity()["Account"]
 
     print(f"Deploying {args.stack_name} to {args.region} (account {account})")
+
+    if not args.stack_name.startswith("sandbox-"):
+        print("ERROR: --stack-name must start with 'sandbox-' (IAM permission boundary)")
+        sys.exit(1)
 
     # Step 1: Source bucket + upload
     print(f"\n=== Step 1: Source bucket ===")
