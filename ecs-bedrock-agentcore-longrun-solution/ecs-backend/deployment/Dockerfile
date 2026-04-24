@@ -1,10 +1,14 @@
-FROM python:3.11-slim as builder
+FROM public.ecr.aws/amazonlinux/amazonlinux:2023 AS builder
+RUN dnf install -y python3.11 python3.11-pip python3.11-devel gcc gcc-c++ && dnf clean all
+RUN alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 && \
+    alternatives --install /usr/bin/pip3 pip3 /usr/bin/pip3.11 1
 WORKDIR /build
 COPY requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
+RUN pip3 install --user --no-cache-dir -r requirements.txt
 
-FROM python:3.11-slim
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+FROM public.ecr.aws/amazonlinux/amazonlinux:2023
+RUN dnf install -y python3.11 curl shadow-utils && dnf clean all && \
+    alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 RUN groupadd -r app && useradd -r -g app app
 WORKDIR /app
 COPY --from=builder /root/.local /home/app/.local
