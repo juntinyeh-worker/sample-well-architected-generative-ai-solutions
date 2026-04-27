@@ -12,6 +12,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from orchestrator.services.intent_service import parse_intent
 from orchestrator.services.agentcore_service import invoke_agentcore_runtime
+from orchestrator.services.task_memory_service import save_task, get_recent_tasks
+from orchestrator.services.github_service import get_repo_gitgraph
+from orchestrator.services.devtool_service import enrich_task
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +94,28 @@ def create_orchestrator_app() -> FastAPI:
         except Exception as e:
             return {"error": str(e)[:200]}
 
+    @app.get("/api/repo/graph")
+    async def repo_graph(repo: str = None):
+        """Fetch git graph from GitHub API and return mermaid gitgraph format."""
+        repo_url = repo or os.getenv("TARGET_REPO_URL", "")
+        if not repo_url:
+            return {"error": "No repo URL provided", "graph": ""}
+        try:
+            loop = asyncio.get_event_loop()
+            graph = await loop.run_in_executor(None, get_repo_gitgraph, repo_url)
+            return {"graph": graph, "repo": repo_url}
+        except Exception as e:
+            logger.warning(f"Failed to fetch git graph: {e}")
+            return {"error": str(e)[:200], "graph": ""}
+
+    @app.get("/api/orchestrator/tasks")
+    async def list_tasks(user: str = "default", limit: int = 50, repo: str = ""):
+        """List recent tasks for a user from DynamoDB, optionally filtered by repo origin."""
+        tasks = get_recent_tasks(user, limit)
+        if repo:
+            tasks = [t for t in tasks if t.get("origin", "") == repo]
+        return {"user": user, "tasks": tasks}
+
     @app.websocket("/ws")
     @app.websocket("/api/orchestrator/ws")
     async def websocket_endpoint(ws: WebSocket):
@@ -98,13 +123,18 @@ def create_orchestrator_app() -> FastAPI:
         session_id = str(uuid.uuid4())[:8]
         session = {"id": session_id, "created": datetime.utcnow().isoformat(), "tasks": [], "history": []}
         sessions[session_id] = session
+        user = "default"
 
         try:
             while True:
                 data = await ws.receive_text()
                 msg = json.loads(data)
                 user_text = msg.get("text", "")
+                user = msg.get("user", user) or "default"
                 session["history"].append({"role": "user", "text": user_text})
+
+                if not user_text.strip():
+                    continue
 
                 pending_done = [t for t in session["tasks"] if t["status"] == "done" and not t.get("delivered")]
                 intent = await parse_intent(user_text, pending_done)
@@ -125,12 +155,19 @@ def create_orchestrator_app() -> FastAPI:
                 if tools_to_run:
                     await ws.send_json({"type": "ack", "message": ack})
                     user_input = intent.get("input", user_text)
+                    repo_url = msg.get("repo", "")
                     for tool_name in tools_to_run:
                         task_id = str(uuid.uuid4())[:8]
-                        task = {"id": task_id, "tool": tool_name, "status": "running", "started": datetime.utcnow().isoformat()}
+                        task = {
+                            "id": task_id, "tool": tool_name, "status": "running",
+                            "input": user_text, "started": datetime.utcnow().isoformat(),
+                        }
+                        if repo_url:
+                            enrich_task(task, repo_url, msg.get("branch", ""), msg.get("commit", ""))
                         session["tasks"].append(task)
+                        save_task(user, task)
                         await ws.send_json({"type": "task_started", "task_id": task_id})
-                        asyncio.create_task(_run_task(task_id, user_input, ws, session))
+                        asyncio.create_task(_run_task(task_id, user_input, ws, session, user))
                 elif ack:
                     await ws.send_json({"type": "chat", "message": ack})
 
@@ -141,7 +178,7 @@ def create_orchestrator_app() -> FastAPI:
     return app
 
 
-async def _run_task(task_id: str, user_input: str, ws: WebSocket, session: dict):
+async def _run_task(task_id: str, user_input: str, ws: WebSocket, session: dict, user: str = "default"):
     """Execute AgentCore runtime invocation and push result."""
     task = next(t for t in session["tasks"] if t["id"] == task_id)
     try:
@@ -151,6 +188,7 @@ async def _run_task(task_id: str, user_input: str, ws: WebSocket, session: dict)
         task["result"] = result
         task["brief"] = brief
         task["completed"] = datetime.utcnow().isoformat()
+        save_task(user, task)
         _save_session(session)
         await ws.send_json({
             "type": "task_complete",
@@ -162,5 +200,6 @@ async def _run_task(task_id: str, user_input: str, ws: WebSocket, session: dict)
         task["status"] = "error"
         task["error"] = str(e)[:200]
         task["completed"] = datetime.utcnow().isoformat()
+        save_task(user, task)
         _save_session(session)
         await ws.send_json({"type": "task_error", "task_id": task_id, "message": f"Error: {str(e)[:200]}"})
