@@ -137,7 +137,7 @@ def create_orchestrator_app() -> FastAPI:
                     continue
 
                 pending_done = [t for t in session["tasks"] if t["status"] == "done" and not t.get("delivered")]
-                intent = await parse_intent(user_text, pending_done)
+                intent = await parse_intent(user_text, pending_done, msg.get("repo", ""))
 
                 if intent.get("follow_up"):
                     if pending_done:

@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 BEDROCK_REGION = os.getenv("BEDROCK_REGION", "us-west-2")
 MODEL_ID = os.getenv("MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
 DEMO_READ_ONLY = os.getenv("DEMO_READ_ONLY", "false").lower() == "true"
+TARGET_REPO_URL = os.getenv("TARGET_REPO_URL", "")
 
 _SYSTEM_PROMPT_FULL = """You are the intent router for a Cloud Operations Assistant powered by Kiro CLI via AgentCore Runtime.
 This platform helps with AWS cloud operations: building code, running cloud commands, live event handling, incident response, and account management.
@@ -68,24 +69,37 @@ IMPORTANT: Never expose confidential account data (credentials, keys, tokens) in
 
 SYSTEM_PROMPT = _SYSTEM_PROMPT_READONLY if DEMO_READ_ONLY else _SYSTEM_PROMPT_FULL
 
+_REPO_CONTEXT = ""
+if TARGET_REPO_URL:
+    _REPO_CONTEXT = f"""
+
+TARGET REPOSITORY: {TARGET_REPO_URL}
+You are locked to this repository ONLY. All code generation, reviews, PRs, and dev operations must target this repo.
+When routing to the agent (Tier 3), always include the repo URL in the input.
+Reject requests that explicitly target a different repository."""
+
 
 def _get_client():
     return boto3.client("bedrock-runtime", region_name=BEDROCK_REGION)
 
 
-async def parse_intent(message: str, pending_tasks: list[dict]) -> dict:
+async def parse_intent(message: str, pending_tasks: list[dict], repo: str = "") -> dict:
     """Use Claude to parse user intent."""
     client = _get_client()
     context = ""
     if pending_tasks:
         context = f"\nPending results: {json.dumps([{'id': t['id'], 'tool': t['tool']} for t in pending_tasks])}"
 
+    repo_ctx = _REPO_CONTEXT
+    if repo and not TARGET_REPO_URL:
+        repo_ctx = f"\nTARGET REPOSITORY: {repo}\nAll operations must target this repo."
+
     resp = client.invoke_model(
         modelId=MODEL_ID,
         body=json.dumps({
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": 300,
-            "system": SYSTEM_PROMPT + context,
+            "system": SYSTEM_PROMPT + repo_ctx + context,
             "messages": [{"role": "user", "content": message}],
         }),
     )
