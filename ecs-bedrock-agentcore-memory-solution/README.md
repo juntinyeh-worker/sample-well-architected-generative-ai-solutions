@@ -1,129 +1,121 @@
-# AgentCore Memory Solution
+# ECS Bedrock AgentCore Memory Solution
 
-Deploy [Amazon Bedrock AgentCore Memory](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/memory.html) as a standalone CloudFormation stack. Provides short-term and long-term memory for AI agents.
+A full-stack async conversational orchestrator with **AgentCore Memory** — everything from the [longrun-solution](../ecs-bedrock-agentcore-longrun-solution/) plus integrated short-term and long-term memory for cross-session context retention.
+
+## What's Different from longrun-solution
+
+This solution adds:
+- `AWS::BedrockAgentCore::Memory` resource with semantic + summarization strategies
+- `MEMORY_ID` env var wired to the AgentCore Runtime
+- Memory API permissions on the Runtime IAM role
+- `--memory-name` and `--event-expiry-days` deploy parameters
+
+Everything else (ECS, CloudFront, ALB, CodeBuild, Cognito, task logging) is identical.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────┐
-│              AgentCore Memory                    │
-│                                                  │
-│  Short-term memory (raw events, per-session)     │
-│       ↓ strategies extract insights ↓            │
-│  Long-term memory (facts, summaries, prefs)      │
-│                                                  │
-│  Strategies:                                     │
-│    • Semantic  → /facts/{actorId}/               │
-│    • Summary   → /summaries/{actorId}/{session}/ │
-│    • UserPref  → /users/{actorId}/preferences/   │
-└─────────────────────────────────────────────────┘
-         ↑ CreateEvent / SearchMemoryRecords ↑
-┌─────────────────────────────────────────────────┐
-│         AgentCore Runtime (your agent)           │
-│  Reads MEMORY_<NAME>_ID env var automatically    │
-└─────────────────────────────────────────────────┘
+┌─────────────────┐     WebSocket      ┌──────────────────────┐
+│  CloudScape UI  │◄──────────────────►│  ECS Fargate         │
+│  (CloudFront)   │                    │  FastAPI Orchestrator │
+└─────────────────┘                    └──────────┬───────────┘
+                                                  │
+                                    ┌─────────────┼─────────────┐
+                                    │             │             │
+                              ┌─────▼─────┐ ┌────▼────┐ ┌─────▼─────┐
+                              │  Bedrock  │ │AgentCore│ │  AgentCore │
+                              │  Claude   │ │ Runtime │ │  Memory    │
+                              │  (Intent) │ │ (Kiro)  │ │            │
+                              └───────────┘ └────┬────┘ └─────▲─────┘
+                                                 │            │
+                                                 └────────────┘
+                                              MEMORY_ID env var
+                                              auto read/write turns
 ```
+
+### Memory Flow
+
+1. User sends message → Orchestrator dispatches to AgentCore Runtime
+2. Runtime reads long-term memory (facts, summaries) for context
+3. Runtime executes task with Kiro CLI
+4. Runtime writes conversation turns as events (short-term memory)
+5. Memory service extracts insights into long-term memory:
+   - **Semantic** → `/facts/{actorId}/` (extracted facts)
+   - **Summarization** → `/summaries/{actorId}/{sessionId}/` (session summaries)
 
 ## Deploy
 
 ```bash
-# Basic — semantic + summarization (default)
-python deploy.py --stack-name my-agent-memory --region us-west-2
+cd deployment-scripts
 
-# All strategies
-python deploy.py --stack-name my-agent-memory \
-  --enable-semantic true \
-  --enable-summarization true \
-  --enable-user-preference true
+# Full deploy with memory
+python deploy.py \
+  --stack-name agentcore-memory-demo \
+  --region us-west-2 \
+  --environment dev \
+  --memory-name AgentMemory \
+  --event-expiry-days 30 \
+  --demo-mask-output true \
+  --demo-read-only true
 
-# Wire to an existing AgentCore Runtime
-python deploy.py --stack-name my-agent-memory \
-  --runtime-arn arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/my_agent-XXXXXXXXXX
+# After deploy, set the API key
+aws ssm put-parameter \
+  --name /agentcore-memory-demo/kiro-api-key \
+  --value "your-api-key" \
+  --type SecureString --overwrite \
+  --region us-west-2
 ```
 
 ## Parameters
 
 | Parameter | Default | Description |
 |---|---|---|
-| `--stack-name` | `agentcore-memory` | CloudFormation stack name |
+| `--stack-name` | `agentcore-longrun-memory` | CloudFormation stack name |
 | `--region` | `us-west-2` | AWS region |
-| `--memory-name` | `AgentMemory` | Memory resource name (alphanumeric + underscore) |
+| `--environment` | `prod` | Environment (dev/staging/prod) |
+| `--memory-name` | `AgentMemory` | Memory resource name |
 | `--event-expiry-days` | `30` | Short-term memory retention (3–365 days) |
-| `--enable-semantic` | `true` | Extract facts from conversations |
-| `--enable-summarization` | `true` | Generate session summaries |
-| `--enable-user-preference` | `false` | Track user preferences |
-| `--runtime-arn` | *(empty)* | Existing AgentCore Runtime ARN to auto-wire |
+| `--demo-mask-output` | `false` | Mask resource IDs in output |
+| `--demo-read-only` | `false` | Restrict to read-only operations |
+| `--phase` | `all` | Deploy phase (infra/build/update/all) |
+
+## Stack Resources (38)
+
+Everything from longrun-solution (36 resources) plus:
+
+| Resource | Type | Description |
+|---|---|---|
+| `AgentCoreMemory` | `AWS::BedrockAgentCore::Memory` | Memory with semantic + summarization strategies |
+
+The AgentCore Runtime is updated with:
+- `MEMORY_ID` env var → Memory resource ID
+- IAM permissions for memory API operations
 
 ## Stack Outputs
 
 | Output | Description |
 |---|---|
-| `MemoryId` | Memory resource ID (pass to your agent) |
-| `MemoryArn` | Memory resource ARN |
-| `MemoryStatus` | CREATING → ACTIVE |
-
-## Integration
-
-### With AgentCore Runtime (recommended)
-
-The deploy script can auto-wire memory to an existing runtime via `--runtime-arn`. It sets `MEMORY_<NAME>_ID` as an environment variable on the runtime. The Strands agent framework picks this up automatically.
-
-### With the longrun-solution stack
-
-To add memory to `ecs-bedrock-agentcore-longrun-solution`:
-
-1. Deploy this memory stack
-2. Pass the `MemoryId` output to the longrun stack's AgentCore Runtime:
-   ```bash
-   python deploy.py --stack-name sandbox-longrun-0426-memory \
-     --runtime-arn arn:aws:bedrock-agentcore:us-west-2:256358067059:runtime/sandbox_longrun_0426_agent-XXXXXXXXXX
-   ```
-
-### Manual (boto3)
-
-```python
-import boto3
-from bedrock_agentcore.memory import MemorySessionManager
-
-session_manager = MemorySessionManager(
-    memory_id="<MemoryId from stack output>",
-    region_name="us-west-2"
-)
-
-session = session_manager.create_memory_session(
-    actor_id="user-123",
-    session_id="session-abc"
-)
-
-# Write conversation turns
-session.add_turns(messages=[...])
-
-# Search long-term memory
-records = session.search_long_term_memories(
-    query="what does the user prefer?",
-    namespace_path="/",
-    top_k=5
-)
-```
-
-## Memory Types
-
-| Type | Retention | What it stores |
-|---|---|---|
-| **Short-term** | `EventExpiryDays` | Raw conversation events (turn-by-turn) |
-| **Long-term** | Permanent | Extracted facts, summaries, preferences |
-
-## Cleanup
-
-```bash
-aws cloudformation delete-stack --stack-name my-agent-memory --region us-west-2
-```
+| `CloudFrontURL` | Frontend URL |
+| `ALBDnsName` | Backend ALB |
+| `MemoryId` | AgentCore Memory ID |
+| `MemoryArn` | AgentCore Memory ARN |
+| `AgentCoreRuntimeArn` | Runtime ARN |
+| `SourceBucket` | Source code bucket |
+| `KiroApiKeySSMParam` | SSM parameter path |
+| *(+ all longrun outputs)* | |
 
 ## Files
 
 ```
 ecs-bedrock-agentcore-memory-solution/
-├── agentcore-memory.yaml   # CloudFormation template
-├── deploy.py               # Deploy script with runtime wiring
-└── README.md               # This file
+├── deployment-scripts/
+│   ├── agentcore-longrun-orchestrator-0.1.0.yaml  # CFN template (v0.2.0 with Memory)
+│   ├── deploy.py                                   # Deploy script with memory params
+│   └── buildspecs/                                 # CodeBuild specs
+├── ecs-backend/                                    # FastAPI orchestrator
+├── frontend-react/                                 # CloudScape React UI
+├── kiro-agentcore-runtime/                         # Kiro CLI ACP wrapper
+├── docs/
+├── SOLUTION_ARCHITECTURE.md
+└── README.md
 ```
