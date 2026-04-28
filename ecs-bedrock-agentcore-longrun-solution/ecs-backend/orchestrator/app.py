@@ -11,7 +11,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from orchestrator.services.intent_service import parse_intent
-from orchestrator.services.agentcore_service import invoke_agentcore_runtime
+from orchestrator.services.agentcore_service import invoke_agentcore_runtime, stream_agentcore_ws
 from orchestrator.services.task_memory_service import save_task, get_recent_tasks
 from orchestrator.services.github_service import get_repo_gitgraph
 from orchestrator.services.devtool_service import enrich_task
@@ -189,13 +189,22 @@ def create_orchestrator_app() -> FastAPI:
 
 
 async def _run_task(task_id: str, user_input: str, ws: WebSocket, session: dict, user: str = "default"):
-    """Execute AgentCore runtime invocation and push result."""
+    """Execute AgentCore runtime invocation via WebSocket streaming and push chunks to frontend."""
     task = next(t for t in session["tasks"] if t["id"] == task_id)
+    chunks = []
+
+    async def on_chunk(text: str):
+        chunks.append(text)
+        try:
+            await ws.send_json({"type": "task_chunk", "task_id": task_id, "text": text})
+        except Exception:
+            pass  # frontend may have disconnected
+
     try:
-        result = await invoke_agentcore_runtime(user_input)
-        brief = result.get("response", str(result))
+        full_response = await stream_agentcore_ws(user_input, on_chunk=on_chunk)
+        brief = full_response or "".join(chunks) or "(empty)"
         task["status"] = "done"
-        task["result"] = result
+        task["result"] = {"response": brief}
         task["brief"] = brief
         task["completed"] = datetime.utcnow().isoformat()
         save_task(user, task)

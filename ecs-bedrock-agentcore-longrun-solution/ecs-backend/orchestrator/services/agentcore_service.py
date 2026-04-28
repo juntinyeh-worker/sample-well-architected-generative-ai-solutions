@@ -101,7 +101,7 @@ def _invoke(payload: dict, session_id: str = None) -> dict:
 
 
 async def invoke_agentcore_runtime(user_input: str) -> dict:
-    """Invoke AgentCore runtime with async polling for long-running tasks."""
+    """Invoke AgentCore runtime with async polling for long-running tasks (fallback)."""
     if not RUNTIME_ARN:
         return {"response": "AgentCore runtime ARN not configured", "error": True}
 
@@ -134,3 +134,56 @@ async def invoke_agentcore_runtime(user_input: str) -> dict:
             logger.warning(f"Poll error: {e}")
 
     return {"response": "Task timed out waiting for agent response"}
+
+
+async def stream_agentcore_ws(user_input: str, on_chunk, on_error=None):
+    """Connect to AgentCore Runtime via WebSocket and stream chunks back.
+
+    Args:
+        user_input: The prompt to send to the agent.
+        on_chunk: async callable(text: str) invoked for each chunk.
+        on_error: optional async callable(msg: str) for errors.
+    Returns:
+        Full concatenated response text.
+    """
+    if not RUNTIME_ARN:
+        if on_error:
+            await on_error("AgentCore runtime ARN not configured")
+        return ""
+
+    import websockets
+    from bedrock_agentcore.runtime import AgentCoreRuntimeClient
+
+    client = AgentCoreRuntimeClient(region=AGENTCORE_REGION)
+    presigned_url = client.generate_presigned_url(runtime_arn=RUNTIME_ARN, expires=300)
+
+    full_text = []
+    try:
+        async with websockets.connect(presigned_url, open_timeout=30, close_timeout=10) as ws:
+            await ws.send(json.dumps({"input": user_input, "prompt": user_input}))
+            async for raw in ws:
+                try:
+                    msg = json.loads(raw)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                msg_type = msg.get("type", "")
+                if msg_type == "chunk":
+                    text = msg.get("text", "")
+                    if text:
+                        full_text.append(text)
+                        await on_chunk(text)
+                elif msg_type == "end":
+                    break
+                elif msg_type == "error":
+                    if on_error:
+                        await on_error(msg.get("message", "Unknown agent error"))
+                    break
+    except Exception as e:
+        logger.warning(f"AgentCore WS stream failed, falling back to HTTP polling: {e}")
+        result = await invoke_agentcore_runtime(user_input)
+        resp = result.get("response", str(result))
+        await on_chunk(resp)
+        return resp
+
+    result = "".join(full_text)
+    return _mask_output(result) if result else "(no response)"

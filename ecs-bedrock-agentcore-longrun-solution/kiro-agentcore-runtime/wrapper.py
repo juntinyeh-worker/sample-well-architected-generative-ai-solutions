@@ -194,6 +194,39 @@ class KiroACP:
             self.pending.pop(rid, None)
         return "".join(self.chunks.pop(rid, [])) or "(no response)"
 
+    def prompt_stream(self, text):
+        """Generator that yields chunks as they arrive from ACP."""
+        if not self.ready or not self.session_id:
+            yield "(agent not ready)"
+            return
+        with self.lock:
+            self.next_id += 1
+            rid = self.next_id
+        q = queue.Queue()
+        self.pending[rid] = q
+        self.chunks[rid] = []
+        self.proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": rid, "method": "session/prompt", "params": {
+            "sessionId": self.session_id, "prompt": [{"type": "text", "text": text}]}}) + "\n")
+        self.proc.stdin.flush()
+        last_idx = 0
+        try:
+            while True:
+                try:
+                    q.get(timeout=1)
+                    # RPC response arrived — drain remaining chunks and exit
+                    for chunk in self.chunks.get(rid, [])[last_idx:]:
+                        yield chunk
+                    break
+                except queue.Empty:
+                    # Yield any new chunks that arrived
+                    current = self.chunks.get(rid, [])
+                    for chunk in current[last_idx:]:
+                        yield chunk
+                    last_idx = len(current)
+        finally:
+            self.pending.pop(rid, None)
+            self.chunks.pop(rid, None)
+
 
 acp = KiroACP()
 
@@ -235,6 +268,49 @@ def main(payload):
 
     threading.Thread(target=run, daemon=True).start()
     return {"status": "accepted", "task_id": task_id, "response": f"Working on your request..."}
+
+
+@app.websocket
+async def websocket_handler(websocket, context):
+    """WebSocket handler: receives prompt, streams ACP chunks back in real-time."""
+    import asyncio
+    await websocket.accept()
+    try:
+        data = await websocket.receive_json()
+        user_input = data.get("input", data.get("prompt", ""))
+        if not user_input:
+            await websocket.send_json({"type": "error", "message": "No input provided"})
+            return
+        if not acp.ready:
+            await websocket.send_json({"type": "error", "message": "Agent is starting up, please retry."})
+            return
+        await websocket.send_json({"type": "start"})
+        chunk_q = queue.Queue()
+        done = threading.Event()
+
+        def _produce():
+            try:
+                for chunk in acp.prompt_stream(user_input):
+                    chunk_q.put(chunk)
+            finally:
+                done.set()
+
+        threading.Thread(target=_produce, daemon=True).start()
+        while not done.is_set() or not chunk_q.empty():
+            try:
+                chunk = chunk_q.get(timeout=0.2)
+                await websocket.send_json({"type": "chunk", "text": chunk})
+            except queue.Empty:
+                continue
+        await websocket.send_json({"type": "end"})
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)[:200]})
+        except Exception:
+            pass
+    finally:
+        await websocket.close()
 
 
 if __name__ == "__main__":

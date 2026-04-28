@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'AgentCore Long-Running Orchestrator - ECS + Bedrock AgentCore Runtime (v0.2.0)'
+Description: 'AgentCore Long-Running Orchestrator - ECS + Bedrock AgentCore Runtime (v0.3.0)'
 
 Parameters:
   Environment:
@@ -209,6 +209,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - bedrock-agentcore:InvokeAgentRuntime
+                  - bedrock-agentcore:InvokeAgentRuntimeWithWebSocketStream
                 Resource: !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/*'
               - Effect: Allow
                 Action:
