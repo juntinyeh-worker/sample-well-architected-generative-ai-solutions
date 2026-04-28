@@ -46,16 +46,16 @@ def get_repo_gitgraph(repo_url: str) -> str:
     # Get recent commits on default branch
     commits = _gh_get(f"/repos/{owner_repo}/commits?sha={default_branch}&per_page={MAX_COMMITS}")
     if not commits:
-        return f"gitgraph\n  commit id: \"empty repo\""
+        return "gitGraph\n  commit id: \"empty repo\""
 
     # Build mermaid gitgraph
-    lines = [f"gitgraph"]
+    lines = ["gitGraph"]
     commit_shas = set()
 
     # Add main branch commits (newest first from API, reverse for graph)
     for c in reversed(commits):
         sha_short = c["sha"][:7]
-        msg = c["commit"]["message"].split("\n")[0][:30].replace('"', "'").replace(":", "-")
+        msg = c["commit"]["message"].split("\n")[0][:30].replace('"', "'").replace(":", "-").replace("&", "+")
         lines.append(f'  commit id: "{sha_short} {msg}"')
         commit_shas.add(c["sha"])
 
@@ -72,7 +72,7 @@ def get_repo_gitgraph(repo_url: str) -> str:
             for c in reversed(bc[:3]):
                 if c["sha"] not in commit_shas:
                     sha_short = c["sha"][:7]
-                    msg = c["commit"]["message"].split("\n")[0][:30].replace('"', "'").replace(":", "-")
+                    msg = c["commit"]["message"].split("\n")[0][:30].replace('"', "'").replace(":", "-").replace("&", "+")
                     lines.append(f'  commit id: "{sha_short} {msg}"')
                     commit_shas.add(c["sha"])
             lines.append(f"  checkout {default_branch}")

@@ -113,7 +113,7 @@ def create_orchestrator_app() -> FastAPI:
         """List recent tasks for a user from DynamoDB, optionally filtered by repo origin."""
         tasks = get_recent_tasks(user, limit)
         if repo:
-            tasks = [t for t in tasks if t.get("origin", "") == repo]
+            tasks = [t for t in tasks if not t.get("origin") or t.get("origin") == repo]
         return {"user": user, "tasks": tasks}
 
     @app.websocket("/ws")
@@ -154,8 +154,18 @@ def create_orchestrator_app() -> FastAPI:
 
                 if tools_to_run:
                     await ws.send_json({"type": "ack", "message": ack})
-                    user_input = intent.get("input", user_text)
+                    # Build agent prompt: always use original user_text, add mode prefix + repo context
+                    devtool = os.getenv("DEVTOOL_MODE", "false").lower() == "true"
+                    prefix = "DEVTOOL MODE: You are a coding assistant. You may read/write code, run tests, use git, and create PRs. Do NOT run any AWS command that creates, modifies, or deletes infrastructure resources.\n\n" if devtool else ""
                     repo_url = msg.get("repo", "")
+                    branch = msg.get("branch", "")
+                    repo_ctx = ""
+                    if repo_url:
+                        repo_ctx = f"\nREPOSITORY CONTEXT: repo={repo_url}"
+                        if branch:
+                            repo_ctx += f" branch={branch}"
+                        repo_ctx += "\nClone or use this repo for all code operations.\n"
+                    user_input = f"{prefix}User request: {user_text}{repo_ctx}"
                     for tool_name in tools_to_run:
                         task_id = str(uuid.uuid4())[:8]
                         task = {

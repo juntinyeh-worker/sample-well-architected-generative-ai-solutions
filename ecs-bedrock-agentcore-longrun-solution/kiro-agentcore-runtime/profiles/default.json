@@ -3,7 +3,7 @@
   "integrations": [
     {
       "name": "aws-api",
-      "enabled": true,
+      "enabled": false,
       "package": "awslabs.aws-api-mcp-server",
       "mcp_server": {
         "command": "python3",
