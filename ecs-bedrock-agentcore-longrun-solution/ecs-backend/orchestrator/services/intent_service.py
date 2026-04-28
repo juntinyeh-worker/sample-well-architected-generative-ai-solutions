@@ -9,6 +9,8 @@ logger = logging.getLogger(__name__)
 BEDROCK_REGION = os.getenv("BEDROCK_REGION", "us-west-2")
 MODEL_ID = os.getenv("MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
 DEMO_READ_ONLY = os.getenv("DEMO_READ_ONLY", "false").lower() == "true"
+DEVTOOL_MODE = os.getenv("DEVTOOL_MODE", "false").lower() == "true"
+TARGET_REPO_URL = os.getenv("TARGET_REPO_URL", "")
 
 _SYSTEM_PROMPT_FULL = """You are the intent router for a Cloud Operations Assistant powered by Kiro CLI via AgentCore Runtime.
 This platform helps with AWS cloud operations: building code, running cloud commands, live event handling, incident response, and account management.
@@ -66,26 +68,72 @@ FOLLOW-UP on previous results (e.g. "yes", "detail", "brief"):
 
 IMPORTANT: Never expose confidential account data (credentials, keys, tokens) in responses. When in doubt between allowing and blocking, BLOCK the request."""
 
-SYSTEM_PROMPT = _SYSTEM_PROMPT_READONLY if DEMO_READ_ONLY else _SYSTEM_PROMPT_FULL
+_SYSTEM_PROMPT_DEVTOOL = """You are the intent router for a Developer Assistant powered by Kiro CLI via AgentCore Runtime.
+This agent is a CODING ASSISTANT scoped to a specific repository. It can read, write, test, build, commit, push, and create PRs.
+It CANNOT modify AWS infrastructure (no CloudFormation, no ECS, no EC2, no IAM changes, etc.).
+
+Classify each user message and respond ONLY with JSON:
+
+TIER 1 — DECLINE:
+Decline if the request is:
+- Unrelated to software development, coding, or DevOps (e.g. recipes, sports)
+- An AWS infrastructure mutation: create/delete/update/modify stacks, instances, roles, buckets, security groups, load balancers, or any CloudFormation/CDK/Terraform apply/deploy that changes live AWS resources
+{"tools": [], "ack": "I'm a coding assistant scoped to your repository. I can help with code, tests, builds, git, and PRs — but I cannot modify AWS infrastructure."}
+
+TIER 2 — ANSWER DIRECTLY (general knowledge, no tool access needed):
+If the request is about coding best practices, language features, architecture patterns, or general dev knowledge:
+{"tools": [], "ack": "your helpful response here"}
+
+TIER 3 — ROUTE TO AGENT (coding tasks that need tool access):
+Forward these to the agent:
+- Reading, writing, or editing source code
+- Running tests, linters, builds (pytest, npm test, make, etc.)
+- Git operations: status, diff, commit, push, branch, merge
+- Creating pull requests or issues (gh pr create, gh issue create)
+- Code review, refactoring, debugging
+- Generating code, scripts, configs, documentation
+- Querying AWS resources in read-only mode (describe, list, get) for context
+Prepend "DEVTOOL MODE: You are a coding assistant. You may read/write code, run tests, use git, and create PRs. Do NOT run any AWS command that creates, modifies, or deletes infrastructure resources." to the input.
+{"tools": ["ask_agent"], "ack": "brief acknowledgment", "input": "DEVTOOL MODE: You are a coding assistant. You may read/write code, run tests, use git, and create PRs. Do NOT run any AWS command that creates, modifies, or deletes infrastructure resources. <user request here>"}
+
+FOLLOW-UP on previous results (e.g. "yes", "detail", "brief"):
+{"tools": [], "ack": "", "follow_up": "brief|detail"}
+
+IMPORTANT: Never expose credentials, keys, or tokens. When in doubt between Tier 2 and Tier 3, prefer Tier 3."""
+
+SYSTEM_PROMPT = _SYSTEM_PROMPT_DEVTOOL if DEVTOOL_MODE else (_SYSTEM_PROMPT_READONLY if DEMO_READ_ONLY else _SYSTEM_PROMPT_FULL)
+
+_REPO_CONTEXT = ""
+if TARGET_REPO_URL:
+    _REPO_CONTEXT = f"""
+
+TARGET REPOSITORY: {TARGET_REPO_URL}
+You are locked to this repository ONLY. All code generation, reviews, PRs, and dev operations must target this repo.
+When routing to the agent (Tier 3), always include the repo URL in the input.
+Reject requests that explicitly target a different repository."""
 
 
 def _get_client():
     return boto3.client("bedrock-runtime", region_name=BEDROCK_REGION)
 
 
-async def parse_intent(message: str, pending_tasks: list[dict]) -> dict:
+async def parse_intent(message: str, pending_tasks: list[dict], repo: str = "") -> dict:
     """Use Claude to parse user intent."""
     client = _get_client()
     context = ""
     if pending_tasks:
         context = f"\nPending results: {json.dumps([{'id': t['id'], 'tool': t['tool']} for t in pending_tasks])}"
 
+    repo_ctx = _REPO_CONTEXT
+    if repo and not TARGET_REPO_URL:
+        repo_ctx = f"\nTARGET REPOSITORY: {repo}\nAll operations must target this repo."
+
     resp = client.invoke_model(
         modelId=MODEL_ID,
         body=json.dumps({
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": 300,
-            "system": SYSTEM_PROMPT + context,
+            "system": SYSTEM_PROMPT + repo_ctx + context,
             "messages": [{"role": "user", "content": message}],
         }),
     )

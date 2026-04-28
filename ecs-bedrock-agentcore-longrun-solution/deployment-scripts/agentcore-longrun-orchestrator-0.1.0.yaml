@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'AgentCore Long-Running Orchestrator - ECS + Bedrock AgentCore Runtime (v0.1.1)'
+Description: 'AgentCore Long-Running Orchestrator - ECS + Bedrock AgentCore Runtime (v0.2.0)'
 
 Parameters:
   Environment:
@@ -19,6 +19,15 @@ Parameters:
     Default: 'false'
     AllowedValues: ['true', 'false']
     Description: Restrict agent to read-only operations (for demo/sandbox)
+  DevtoolMode:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Enable coding assistant mode (allows code/git/PR ops, blocks infra mutations)
+  TargetRepoUrl:
+    Type: String
+    Default: ''
+    Description: Target repository URL for devtool mode (e.g. https://github.com/owner/repo)
   BackendImage:
     Type: String
     Default: 'public.ecr.aws/nginx/nginx:alpine'
@@ -214,6 +223,15 @@ Resources:
                 Resource:
                   - !GetAtt TaskLogBucket.Arn
                   - !Sub '${TaskLogBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:DeleteItem
+                Resource:
+                  - !GetAtt TaskTable.Arn
 
   TaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -244,8 +262,16 @@ Resources:
               Value: !Ref DemoMaskOutput
             - Name: DEMO_READ_ONLY
               Value: !Ref DemoReadOnly
+            - Name: DEVTOOL_MODE
+              Value: !Ref DevtoolMode
+            - Name: PARAM_PREFIX
+              Value: !Ref AWS::StackName
+            - Name: TARGET_REPO_URL
+              Value: !Ref TargetRepoUrl
             - Name: TASK_LOG_BUCKET
               Value: !Ref TaskLogBucket
+            - Name: TASK_TABLE_NAME
+              Value: !Ref TaskTable
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -325,6 +351,26 @@ Resources:
         ScanOnPush: true
       LifecyclePolicy:
         LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"untagged","countType":"imageCountMoreThan","countNumber":3},"action":{"type":"expire"}}]}'
+
+  # DynamoDB — Task Memory
+  TaskTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-tasks'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: user
+          AttributeType: S
+        - AttributeName: task_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user
+          KeyType: HASH
+        - AttributeName: task_id
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
 
   # S3 Buckets
   SourceBucket:
@@ -548,6 +594,7 @@ Resources:
       ProtocolConfiguration: HTTP
       EnvironmentVariables:
         KIRO_API_KEY_SSM_PARAM: !Ref KiroApiKey
+        GH_TOKEN_SSM_PARAM: !Ref GhToken
 
   # Frontend Build Pipeline
   FrontendBuildRole:
@@ -619,6 +666,15 @@ Resources:
       Value: PLACEHOLDER
       Description: Kiro API key — update value manually via console or CLI after stack creation
 
+  # SSM Parameter for GitHub PAT
+  GhToken:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/${AWS::StackName}/gh-token'
+      Type: String
+      Value: PLACEHOLDER
+      Description: GitHub PAT — update value manually via console or CLI after stack creation
+
 Outputs:
   CloudFrontURL:
     Value: !Sub 'https://${Distribution.DomainName}'
@@ -649,3 +705,7 @@ Outputs:
     Value: !Ref SourceBucket
   KiroApiKeySSMParam:
     Value: !Ref KiroApiKey
+  GhTokenSSMParam:
+    Value: !Ref GhToken
+  TaskTableName:
+    Value: !Ref TaskTable
