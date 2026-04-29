@@ -107,11 +107,19 @@ async def invoke_agentcore_runtime(user_input: str) -> dict:
 
     session_id = str(uuid.uuid4())
 
-    # First call: submit the task
-    result = await asyncio.get_event_loop().run_in_executor(
-        None, lambda: _invoke({"input": user_input}, session_id))
+    # Submit — retry if agent is still initializing
+    for attempt in range(20):
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: _invoke({"input": user_input}, session_id))
+        status = result.get("status", "")
+        if status == "initializing":
+            logger.info(f"Agent initializing, retry {attempt+1}/20...")
+            await asyncio.sleep(3)
+            continue
+        break
+    else:
+        return {"response": "Agent failed to start after 60 seconds"}
 
-    status = result.get("status", "")
     task_id = result.get("task_id", "")
     sid = result.get("_session_id", session_id)
 
@@ -157,11 +165,23 @@ async def stream_agentcore_ws(user_input: str, on_chunk, on_error=None):
     session_id = str(uuid.uuid4())
 
     try:
-        # Submit the task
-        result = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: _invoke({"input": user_input}, session_id))
+        # Submit the task — retry if agent is still initializing
+        for attempt in range(20):  # retry up to ~60s for agent startup
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: _invoke({"input": user_input}, session_id))
 
-        status = result.get("status", "")
+            status = result.get("status", "")
+            if status == "initializing":
+                logger.info(f"Agent initializing, retry {attempt+1}/20...")
+                await asyncio.sleep(3)
+                continue
+            break
+        else:
+            msg = "Agent failed to start after 60 seconds"
+            if on_error:
+                await on_error(msg)
+            return msg
+
         task_id = result.get("task_id", "")
         sid = result.get("_session_id", session_id)
 
