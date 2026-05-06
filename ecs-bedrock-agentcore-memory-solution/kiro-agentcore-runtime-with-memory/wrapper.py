@@ -304,8 +304,10 @@ def main(payload):
             # Load steering context if a pack is specified
             steering_context = ""
             if steering_pack:
-                steering_dir = os.path.join(STEERING_PACKS_DIR, steering_pack, ".kiro", "steering")
+                pack_dir = os.path.join(STEERING_PACKS_DIR, steering_pack)
+                steering_dir = os.path.join(pack_dir, ".kiro", "steering")
                 if os.path.isdir(steering_dir):
+                    steering_context = f"[Working directory for scripts: {pack_dir}]\n\n"
                     for fname in sorted(os.listdir(steering_dir)):
                         if fname.endswith(".md"):
                             with open(os.path.join(steering_dir, fname)) as f:
