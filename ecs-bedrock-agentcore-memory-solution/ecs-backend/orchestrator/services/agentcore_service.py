@@ -53,6 +53,17 @@ def _mask_output(text: str) -> str:
     """Apply ID and name masking if DEMO_MASK_OUTPUT is enabled. Returns processed text."""
     if not DEMO_MASK_OUTPUT:
         return text
+
+    # Preserve presigned URLs (they contain account IDs and tokens that must not be masked)
+    import re as _re
+    _url_placeholder = {}
+    def _save_url(m):
+        key = f"__URL_{len(_url_placeholder)}__"
+        _url_placeholder[key] = m.group(0)
+        return key
+    text = _re.sub(r'https://[^\s\)]+(?:presign|AWSAccessKeyId|X-Amz-Credential)[^\s\)]*', _save_url, text)
+    text = _re.sub(r's3://[^\s\)]+', _save_url, text)
+
     found = False
 
     def _replace_id(m):
@@ -72,6 +83,9 @@ def _mask_output(text: str) -> str:
     text = _NAME_PATTERNS.sub(_replace_name, text)
     if found:
         text += _DEMO_DISCLAIMER
+    # Restore preserved URLs
+    for key, url in _url_placeholder.items():
+        text = text.replace(key, url)
     return text
 
 
