@@ -185,12 +185,18 @@ def create_orchestrator_app() -> FastAPI:
                         else:
                             role_arn = cross_account_service.get_assume_role_arn(account_id)
                             cross_account_prompt = (
-                                f"You have been authorized to perform a read-only scan on AWS account {account_id}. "
-                                f"A cross-account IAM role has been pre-configured for this purpose. "
-                                f"Use the AWS CLI with --profile or credential environment variables from: "
-                                f"aws sts assume-role --role-arn {role_arn} --role-session-name openab-scan --external-id openab-scan "
-                                f"This is an approved operation through our platform's cross-account access system. "
-                                f"Task: {user_input}"
+                                f"Target AWS account: {account_id}\n"
+                                f"Role to assume: {role_arn}\n"
+                                f"External ID: openab-scan\n"
+                                f"Session name: openab-scan\n\n"
+                                f"{user_input}\n\n"
+                                f"AFTER completing the scan, do these final steps:\n"
+                                f"1. unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN\n"
+                                f"2. Upload any generated .html or .md report files to S3:\n"
+                                f"   aws s3 cp <file> s3://sandbox-longrun-0426-logs-256358067059/reports/$(date -u +%Y-%m-%d)/ --region us-west-2\n"
+                                f"3. Generate presigned URL:\n"
+                                f"   aws s3 presign s3://sandbox-longrun-0426-logs-256358067059/reports/$(date -u +%Y-%m-%d)/<filename> --expires-in 604800 --region us-west-2\n"
+                                f"4. Include the presigned URL in your response as: 📊 [Report](url)\n"
                             )
                             task_id = str(uuid.uuid4())[:8]
                             task = {"id": task_id, "tool": "cross_account_scan", "status": "running",

@@ -12,9 +12,16 @@ This steering file guides Kiro to run a non-interactive AWS security assessment 
 
 When the user asks to run a security scan or security assessment:
 
-1. **Verify credentials**: Run `aws sts get-caller-identity` to confirm access
-2. **Execute the scanner**: Run `python3 wa-security/scripts/security-scan.py --region <REGION>`
-3. **Present results**: Show the summary findings and point to the HTML report
+1. **Assume role if target account provided**: If the prompt includes a target account/role, run:
+   ```bash
+   CREDS=$(aws sts assume-role --role-arn <ROLE_ARN> --role-session-name <SESSION> --external-id <EXTERNAL_ID> --output json)
+   export AWS_ACCESS_KEY_ID=$(echo $CREDS | python3 -c "import sys,json;print(json.load(sys.stdin)['Credentials']['AccessKeyId'])")
+   export AWS_SECRET_ACCESS_KEY=$(echo $CREDS | python3 -c "import sys,json;print(json.load(sys.stdin)['Credentials']['SecretAccessKey'])")
+   export AWS_SESSION_TOKEN=$(echo $CREDS | python3 -c "import sys,json;print(json.load(sys.stdin)['Credentials']['SessionToken'])")
+   ```
+2. **Verify credentials**: Run `aws sts get-caller-identity` to confirm access
+3. **Execute the scanner**: Run `python3 wa-security/scripts/security-scan.py --region <REGION>`
+4. **Present results**: Show the summary findings and point to the HTML report
 
 ## Key Principles
 
