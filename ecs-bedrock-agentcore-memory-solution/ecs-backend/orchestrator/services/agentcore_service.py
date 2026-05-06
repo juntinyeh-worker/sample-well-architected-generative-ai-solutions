@@ -100,6 +100,26 @@ def _invoke(payload: dict, session_id: str = None) -> dict:
     return {**data, "_session_id": session}
 
 
+STEERING_PACKS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "kiro-agentcore-runtime-with-memory", "steering-packs")
+if not os.path.isdir(STEERING_PACKS_DIR):
+    # Fallback for deployed container where files are alongside ecs-backend
+    STEERING_PACKS_DIR = os.getenv("STEERING_PACKS_DIR", "/app/steering-packs")
+
+
+def _load_steering_context(pack_name: str) -> str:
+    """Load steering pack .md files and return as context string."""
+    pack_dir = os.path.join(STEERING_PACKS_DIR, pack_name)
+    steering_dir = os.path.join(pack_dir, ".kiro", "steering")
+    if not os.path.isdir(steering_dir):
+        return ""
+    context = f"[Working directory for scripts: {pack_dir}]\n\n"
+    for fname in sorted(os.listdir(steering_dir)):
+        if fname.endswith(".md"):
+            with open(os.path.join(steering_dir, fname)) as f:
+                context += f.read() + "\n\n"
+    return context
+
+
 async def invoke_agentcore_runtime(user_input: str, assume_role_arn: str = "", steering_pack: str = "") -> dict:
     """Invoke AgentCore runtime with async polling for long-running tasks."""
     if not RUNTIME_ARN:
@@ -107,11 +127,17 @@ async def invoke_agentcore_runtime(user_input: str, assume_role_arn: str = "", s
 
     session_id = str(uuid.uuid4())
 
-    payload = {"input": user_input}
+    # Inject steering context into the input (backend-side injection)
+    effective_input = user_input
+    if steering_pack:
+        steering_ctx = _load_steering_context(steering_pack)
+        if steering_ctx:
+            effective_input = steering_ctx + user_input
+            logger.info(f"Steering pack '{steering_pack}' injected ({len(steering_ctx)} chars)")
+
+    payload = {"input": effective_input}
     if assume_role_arn:
         payload["assume_role_arn"] = assume_role_arn
-    if steering_pack:
-        payload["steering_pack"] = steering_pack
 
     # First call: submit the task
     result = await asyncio.get_event_loop().run_in_executor(
