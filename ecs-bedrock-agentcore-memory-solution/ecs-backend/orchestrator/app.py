@@ -248,12 +248,12 @@ def create_orchestrator_app() -> FastAPI:
 def _detect_steering_pack(text: str) -> str:
     """Auto-detect which steering pack to use based on keywords in the request."""
     t = text.lower()
-    if any(k in t for k in ["security", "vulnerability", "compliance", "audit", "iam", "public access"]):
-        return "security-audit"
+    if any(k in t for k in ["security", "vulnerability", "compliance", "audit", "iam", "public access", "encryption"]):
+        return "wa-security"
     if any(k in t for k in ["cost", "savings", "expensive", "billing", "rightsiz", "waste", "idle"]):
-        return "cost-optimization"
-    if any(k in t for k in ["architecture", "well-architected", "reliability", "scalab", "design review"]):
-        return "arch-review"
+        return "wa-cost"
+    if any(k in t for k in ["operation", "maturity", "observability", "automation", "cicd", "monitoring", "incident"]):
+        return "wa-ops"
     return "default"
 
 

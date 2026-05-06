@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>Cloud Operation Assistant V3</title>
+<title>Well-Architected AI Assessment</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f1b2d;color:#d1d5db;height:100vh;display:flex;flex-direction:column}
@@ -64,7 +64,7 @@ header h1{font-size:16px;color:#fff;font-weight:600}
 </head>
 <body>
 <header>
-  <h1>☁️ Cloud Operation Assistant V3</h1>
+  <h1>🏗️ Well-Architected AI Assessment</h1>
   <div style="display:flex;align-items:center;gap:16px">
     <a href="/task-log.html" style="color:#60a5fa;font-size:13px;text-decoration:none">📋 Task Log</a>
     <div id="status"><span class="dot" id="status-dot"></span><span id="status-text"></span></div>
@@ -74,18 +74,19 @@ header h1{font-size:16px;color:#fff;font-weight:600}
   <div class="chat-panel">
     <div id="chat-messages">
       <div class="welcome" id="welcome">
-        <h2>Welcome to Cloud Operation Assistant</h2>
+        <h2>AWS Well-Architected AI Assessment</h2>
         <div class="welcome-body">
-        <p class="desc">This is AI-powered AWS Cloud Operation Assistant. Ask questions about your infrastructure, inspect resources, review costs, and troubleshoot issues — all through natural language. Have a try run on the following sample actions, or give your command in the chat box.</p>
+        <p class="desc">AI-powered assessments against the AWS Well-Architected Framework. Select a scenario below or type your own request.</p>
+
+        <div class="note" style="margin-bottom:16px">🔗 <strong>Prerequisites — Cross-Account Access</strong><br/><a href="https://us-west-2.console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/quickcreate?stackName=OpenAB-ReadOnlyAccess&templateURL=https%3A%2F%2Fsandbox-longrun-0426-source-256358067059-us-west-2.s3.us-west-2.amazonaws.com%2Ftemplates%2Fcross-account-readonly-role.yaml&param_TrustedAccountId=256358067059&param_TrustedRoleName=sandbox-longrun-0426-McpAssumeRole&param_ExternalId=openab-scan" target="_blank" rel="noopener" style="color:#4a9eff;font-weight:600">Click here to deploy the ReadOnly role</a> in your target account first. Then use any scenario below with your account ID.</div>
+
         <div class="examples">
-          <div class="ex" onclick="tryExample(this)"><span>💰 Cost &amp; Billing</span>What's my current billing status?</div>
-          <div class="ex" onclick="tryExample(this)"><span>🖥️ Compute</span>Find me the low utilized EC2 instances in the past 24 hours</div>
-          <div class="ex" onclick="tryExample(this)"><span>📋 Logs &amp; Monitoring</span>Check my CloudWatch logs for EKS clusters and summarize any errors or warnings from the last 24 hours</div>
-          <div class="ex" onclick="tryExample(this)"><span>🔒 Security &amp; Incident Response</span>Is there any abnormal trail in CloudTrail? I need incident response instructions if suspicious activity is found</div>
-          <div class="ex" onclick="tryExample(this)"><span>🏗️ Infrastructure Review</span>Review my VPC setup including subnets, route tables, and NAT gateways, and flag any misconfigurations</div>
-          <div class="ex" onclick="tryExample(this)"><span>📦 Storage &amp; Compliance</span>List all S3 buckets that have public access enabled and check if server-side encryption is configured</div>
+          <div class="ex" onclick="tryExample(this)" style="border-left:3px solid #ef4444"><span>🔒 Security Assessment</span>Scan account 123456789012 for a Well-Architected Security assessment — check IAM, network exposure, encryption, and detection controls</div>
+          <div class="ex" onclick="tryExample(this)" style="border-left:3px solid #f59e0b"><span>💰 Cost Optimization Assessment</span>Scan account 123456789012 for a Well-Architected Cost Optimization assessment — find idle resources, rightsizing opportunities, and savings plans coverage</div>
+          <div class="ex" onclick="tryExample(this)" style="border-left:3px solid #3b82f6"><span>⚙️ Cloud Operations Maturity Assessment</span>Scan account 123456789012 for a Well-Architected Operational Excellence assessment — evaluate observability, automation, change management, and incident readiness</div>
         </div>
-        <div class="note">📌 <strong>Multi-Account Support</strong> — This assistant can scan other AWS accounts. <a href="https://us-west-2.console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/quickcreate?stackName=OpenAB-ReadOnlyAccess&templateURL=https%3A%2F%2Fsandbox-longrun-0426-source-256358067059-us-west-2.s3.us-west-2.amazonaws.com%2Ftemplates%2Fcross-account-readonly-role.yaml&param_TrustedAccountId=256358067059&param_TrustedRoleName=sandbox-longrun-0426-McpAssumeRole&param_ExternalId=openab-scan" target="_blank" rel="noopener" style="color:#4a9eff;font-weight:600">Click here to deploy the ReadOnly role</a> in your target account, then prompt like: <em>"Scan account 123456789012 to see if there is any Security Findings"</em></div>
+
+        <p style="font-size:12px;color:#6b7280;margin-top:12px">Replace <code>123456789012</code> with your actual AWS account ID. Results typically take 2-5 minutes.</p>
         </div>
       </div>
     </div>
