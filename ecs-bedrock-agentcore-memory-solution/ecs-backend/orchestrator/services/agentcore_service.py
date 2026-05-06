@@ -93,6 +93,7 @@ def _invoke(payload: dict, session_id: str = None) -> dict:
     resp = client.invoke_agent_runtime(**kwargs)
     body = resp["response"].read().decode()
     session = resp.get("runtimeSessionId", session_id)
+    logger.info(f"Runtime response: status_code={resp.get('statusCode')}, body_len={len(body)}, body_preview={body[:200]}")
     try:
         data = json.loads(body)
     except json.JSONDecodeError:
@@ -134,10 +135,14 @@ async def invoke_agentcore_runtime(user_input: str, assume_role_arn: str = "", s
         if steering_ctx:
             effective_input = steering_ctx + user_input
             logger.info(f"Steering pack '{steering_pack}' injected ({len(steering_ctx)} chars)")
+        else:
+            logger.warning(f"Steering pack '{steering_pack}' not found at {STEERING_PACKS_DIR}")
 
     payload = {"input": effective_input}
     if assume_role_arn:
         payload["assume_role_arn"] = assume_role_arn
+
+    logger.info(f"AgentCore invoke: input_len={len(effective_input)}, steering={steering_pack or 'none'}, assume_role={'yes' if assume_role_arn else 'no'}")
 
     # First call: submit the task
     result = await asyncio.get_event_loop().run_in_executor(

@@ -204,6 +204,7 @@ def create_orchestrator_app() -> FastAPI:
                             session["tasks"].append(task)
                             save_task(user, task)
                             await ws.send_json({"type": "task_started", "task_id": task_id})
+                            logger.info(f"Cross-account scan: account={account_id}, pack={_detect_steering_pack(user_input)}, prompt_len={len(cross_account_prompt)}")
                             asyncio.create_task(_run_task(task_id, cross_account_prompt, ws, session, user, steering_pack=_detect_steering_pack(user_input)))
 
                     # Cross-account confirm: user says role is deployed
