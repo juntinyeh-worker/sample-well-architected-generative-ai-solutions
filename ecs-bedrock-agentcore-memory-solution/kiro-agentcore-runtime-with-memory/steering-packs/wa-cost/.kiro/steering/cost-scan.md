@@ -208,4 +208,30 @@ After generating both files, print:
    HTML:  cost-report-{DATE}.html
 ```
 
+## Step 6: Upload Reports to S3
+
+IMPORTANT: Before uploading, revert to sandbox credentials:
+```bash
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+```
+
+Then upload each report and generate presigned URLs:
+```bash
+BUCKET="sandbox-longrun-0426-logs-256358067059"
+DATE=$(date -u +%Y-%m-%d)
+
+aws s3 cp cost-report-${DATE}.html "s3://$BUCKET/reports/$DATE/cost-report.html" --region us-west-2
+aws s3 cp cost-report-${DATE}.md "s3://$BUCKET/reports/$DATE/cost-report.md" --region us-west-2
+
+HTML_URL=$(aws s3 presign "s3://$BUCKET/reports/$DATE/cost-report.html" --expires-in 604800 --region us-west-2)
+MD_URL=$(aws s3 presign "s3://$BUCKET/reports/$DATE/cost-report.md" --expires-in 604800 --region us-west-2)
+```
+
+Include in your final output:
+```
+📊 **Reports:**
+- [Cost Report (HTML)]($HTML_URL)
+- [Cost Report (Markdown)]($MD_URL)
+```
+
 Do NOT ask any questions. Do NOT wait for approval between steps. Execute everything sequentially and produce the deliverables.
