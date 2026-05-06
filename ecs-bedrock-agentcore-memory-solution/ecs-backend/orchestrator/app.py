@@ -198,7 +198,7 @@ def create_orchestrator_app() -> FastAPI:
                             session["tasks"].append(task)
                             save_task(user, task)
                             await ws.send_json({"type": "task_started", "task_id": task_id})
-                            asyncio.create_task(_run_task(task_id, cross_account_prompt, ws, session, user))
+                            asyncio.create_task(_run_task(task_id, cross_account_prompt, ws, session, user, steering_pack=_detect_steering_pack(user_input)))
 
                     # Cross-account confirm: user says role is deployed
                     elif "cross_account_confirm" in tools_to_run:
@@ -233,7 +233,8 @@ def create_orchestrator_app() -> FastAPI:
                             session["tasks"].append(task)
                             save_task(user, task)
                             await ws.send_json({"type": "task_started", "task_id": task_id})
-                            asyncio.create_task(_run_task(task_id, user_input, ws, session, user))
+                            pack = _detect_steering_pack(user_input)
+                            asyncio.create_task(_run_task(task_id, user_input, ws, session, user, steering_pack=pack))
                 elif ack:
                     await ws.send_json({"type": "chat", "message": ack})
 
@@ -244,11 +245,23 @@ def create_orchestrator_app() -> FastAPI:
     return app
 
 
-async def _run_task(task_id: str, user_input: str, ws: WebSocket, session: dict, user: str = "default", assume_role_arn: str = ""):
+def _detect_steering_pack(text: str) -> str:
+    """Auto-detect which steering pack to use based on keywords in the request."""
+    t = text.lower()
+    if any(k in t for k in ["security", "vulnerability", "compliance", "audit", "iam", "public access"]):
+        return "security-audit"
+    if any(k in t for k in ["cost", "savings", "expensive", "billing", "rightsiz", "waste", "idle"]):
+        return "cost-optimization"
+    if any(k in t for k in ["architecture", "well-architected", "reliability", "scalab", "design review"]):
+        return "arch-review"
+    return "default"
+
+
+async def _run_task(task_id: str, user_input: str, ws: WebSocket, session: dict, user: str = "default", assume_role_arn: str = "", steering_pack: str = ""):
     """Execute AgentCore runtime invocation and push result."""
     task = next(t for t in session["tasks"] if t["id"] == task_id)
     try:
-        result = await invoke_agentcore_runtime(user_input, assume_role_arn=assume_role_arn)
+        result = await invoke_agentcore_runtime(user_input, assume_role_arn=assume_role_arn, steering_pack=steering_pack)
         brief = result.get("response", str(result))
         task["status"] = "done"
         task["result"] = result

@@ -90,6 +90,17 @@ app = BedrockAgentCoreApp()
 # Store completed results by task_id
 results = {}
 
+STEERING_PACKS_DIR = os.getenv("STEERING_PACKS_DIR", "/opt/steering-packs")
+
+
+def get_steering_cwd(pack_name: str = "default") -> str:
+    """Return the cwd path for a given steering pack."""
+    path = os.path.join(STEERING_PACKS_DIR, pack_name)
+    if os.path.isdir(path):
+        return path
+    return os.path.join(STEERING_PACKS_DIR, "default") if os.path.isdir(os.path.join(STEERING_PACKS_DIR, "default")) else "/tmp"
+
+
 INTEGRATION_PROFILE = os.getenv("INTEGRATION_PROFILE", "/app/profiles/default.json")
 
 
@@ -182,10 +193,11 @@ class KiroACP:
         threading.Thread(target=self._log_stderr, daemon=True).start()
         self._call("initialize", {"protocolVersion": 1, "clientCapabilities": {}, "clientInfo": {"name": "agentcore", "version": "0.1"}})
         mcp_servers = load_integration_profile()
-        r = self._call("session/new", {"cwd": "/tmp", "mcpServers": mcp_servers})
+        cwd = get_steering_cwd("default")
+        r = self._call("session/new", {"cwd": cwd, "mcpServers": mcp_servers})
         self.session_id = r.get("result", {}).get("sessionId", "")
         self.ready = True
-        logger.info(f"ACP ready, session={self.session_id}, integrations={len(mcp_servers)}")
+        logger.info(f"ACP ready, session={self.session_id}, cwd={cwd}, integrations={len(mcp_servers)}")
 
     def _log_stderr(self):
         for line in self.proc.stderr:
@@ -285,9 +297,21 @@ def main(payload):
     task_id = app.add_async_task("kiro_prompt")
     actor_id = payload.get("actor_id", payload.get("user", "default")) or "default"
     assume_role_arn = payload.get("assume_role_arn", "")
+    steering_pack = payload.get("steering_pack", "")
 
     def run():
         try:
+            # Load steering context if a pack is specified
+            steering_context = ""
+            if steering_pack:
+                steering_dir = os.path.join(STEERING_PACKS_DIR, steering_pack, ".kiro", "steering")
+                if os.path.isdir(steering_dir):
+                    for fname in sorted(os.listdir(steering_dir)):
+                        if fname.endswith(".md"):
+                            with open(os.path.join(steering_dir, fname)) as f:
+                                steering_context += f.read() + "\n\n"
+                    logger.info(f"Loaded steering pack: {steering_pack} ({len(steering_context)} chars)")
+
             # Set cross-account role for MCP server if provided
             if assume_role_arn:
                 # Role chain: assume McpAssumeRole first, then MCP server assumes target role
@@ -303,7 +327,7 @@ def main(payload):
                 os.environ["AWS_ASSUME_ROLE_ARN"] = assume_role_arn
                 os.environ["AWS_ASSUME_ROLE_EXTERNAL_ID"] = external_id
             context = memory_search(user_input, actor_id)
-            prompt = context + user_input if context else user_input
+            prompt = steering_context + context + user_input if (steering_context or context) else user_input
             result = acp.prompt(prompt)
             results[task_id] = result
             memory_add_turns(actor_id, task_id, user_input, result)
