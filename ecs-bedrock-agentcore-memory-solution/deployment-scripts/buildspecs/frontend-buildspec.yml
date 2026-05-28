@@ -32,6 +32,7 @@ phases:
       - aws s3 cp orchestrator-v2.html s3://$STATIC_BUCKET/orchestrator-v2.html --content-type "text/html"
       - aws s3 cp task-log.html s3://$STATIC_BUCKET/task-log.html --content-type "text/html"
       - aws s3 cp developer-assistant-dev-v1.html s3://$STATIC_BUCKET/developer-assistant-dev-v1.html --content-type "text/html"
+      - aws s3 cp aws-well-architected-ai-review.html s3://$STATIC_BUCKET/aws-well-architected-ai-review.html --content-type "text/html"
       - aws s3 cp /tmp/config.js s3://$STATIC_BUCKET/config.js --content-type "application/javascript"
       - echo "Invalidating CloudFront cache..."
       - aws cloudfront create-invalidation --distribution-id $DISTRIBUTION_ID --paths "/*"

@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Well-Architected AI Assessment</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f1b2d;color:#d1d5db;height:100vh;display:flex;flex-direction:column}
+header{background:#161e2d;padding:12px 20px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #2a3a50}
+header h1{font-size:16px;color:#fff;font-weight:600}
+#status{font-size:12px;display:flex;align-items:center;gap:6px}
+#status .dot{width:8px;height:8px;border-radius:50%}
+.main{flex:1;display:flex;overflow:hidden}
+/* Chat area */
+.chat-panel{flex:1;display:flex;flex-direction:column;min-width:200px}
+/* Resizer */
+.resizer{width:6px;cursor:col-resize;background:#2a3a50;transition:background .15s;flex-shrink:0}
+.resizer:hover,.resizer.active{background:#3b82f6}
+#chat-messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
+.msg{max-width:78%;padding:10px 14px;border-radius:8px;font-size:14px;line-height:1.6;word-wrap:break-word}
+.msg.user{align-self:flex-end;background:#0073bb;color:#fff}
+.msg.ai{align-self:flex-start;background:#1a2740;color:#e0e0e0;border-left:3px solid #3b82f6}
+.msg.ai.ack{border-left-color:#f59e0b}
+.msg pre{background:#0a1220;padding:8px;border-radius:4px;overflow-x:auto;font-size:12px;margin:6px 0}
+.msg code{background:#0a1220;padding:1px 4px;border-radius:3px;font-size:12px}
+.input-bar{padding:12px 16px;background:#161e2d;border-top:1px solid #2a3a50;display:flex;gap:8px}
+.input-bar textarea{flex:1;background:#0f1b2d;border:1px solid #2a3a50;color:#fff;padding:8px 12px;border-radius:6px;resize:none;font-size:14px;font-family:inherit;outline:none}
+.input-bar textarea:focus{border-color:#3b82f6}
+.input-bar button{background:#0073bb;color:#fff;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;font-size:14px;font-weight:500}
+.input-bar button:hover{background:#005a94}
+/* Task panel */
+.task-panel{width:50%;background:#161e2d;border-left:none;display:flex;flex-direction:column;min-width:0;flex-shrink:0}
+.task-panel.collapsed{width:0;min-width:0;overflow:hidden}
+.task-panel.collapsed+.resizer{display:none}
+.task-header{padding:10px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #2a3a50;min-height:44px}
+.task-header h2{font-size:14px;color:#fff;font-weight:600;white-space:nowrap}
+.task-panel.collapsed .task-header h2,.task-panel.collapsed .task-count,.task-panel.collapsed #task-list{display:none}
+.toggle-btn{background:none;border:none;color:#9ca3af;cursor:pointer;font-size:18px;padding:2px 6px}
+.toggle-btn:hover{color:#fff}
+.task-count{font-size:11px;color:#9ca3af;padding:0 12px 4px}
+#task-list{flex:1;overflow-y:auto;padding:6px}
+.task-item{margin:4px 6px;border-radius:6px;background:#0f1b2d;border:1px solid #2a3a50;overflow:hidden}
+.task-row{display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer;user-select:none}
+.task-row:hover{background:#1a2740}
+.task-icon{width:20px;height:20px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+/* spinner */
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{width:16px;height:16px;border:2px solid #3b82f6;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite}
+.dot-green{width:10px;height:10px;border-radius:50%;background:#22c55e}
+.dot-red{width:10px;height:10px;border-radius:50%;background:#ef4444}
+.task-label{flex:1;font-size:13px;color:#d1d5db;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.task-chevron{color:#6b7280;font-size:12px;transition:transform .15s}
+.task-chevron.open{transform:rotate(90deg)}
+.task-body{padding:0 12px 12px;font-size:13px;line-height:1.6;color:#b0b8c8;display:none;border-top:1px solid #2a3a50}
+.task-body.open{display:block;padding-top:10px}
+.task-body pre{background:#0a1220;padding:8px;border-radius:4px;overflow-x:auto;font-size:12px;margin:4px 0;white-space:pre-wrap}
+/* welcome */
+.welcome{padding:24px;max-width:640px;margin:auto}
+.welcome h2{color:#fff;font-size:20px;margin-bottom:6px}
+.welcome .desc{color:#9ca3af;font-size:14px;line-height:1.6;margin-bottom:16px}
+.welcome .examples{display:flex;flex-direction:column;gap:8px;margin-bottom:18px}
+.welcome .ex{background:#1a2740;border:1px solid #2a3a50;border-radius:8px;padding:10px 14px;cursor:pointer;color:#d1d5db;font-size:13px;transition:border-color .15s}
+.welcome .ex:hover{border-color:#3b82f6}
+.welcome .ex span{color:#6b7280;font-size:11px;display:block;margin-bottom:2px}
+.welcome .note{background:#1a1a2e;border:1px solid #3b3a5c;border-radius:8px;padding:12px 14px;font-size:12px;color:#a5b4fc;line-height:1.5}
+</style>
+</head>
+<body>
+<header>
+  <h1>🏗️ AWS Well-Architected AI Assessment (Private Beta)</h1>
+  <div style="display:flex;align-items:center;gap:16px">
+    <div id="status"><span class="dot" id="status-dot"></span><span id="status-text"></span></div>
+  </div>
+</header>
+<div class="main">
+<div id="agreement-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center">
+  <div style="background:#1a2740;border:1px solid #2a3a50;border-radius:12px;padding:32px;max-width:560px;width:90%;color:#d1d5db;box-shadow:0 8px 32px rgba(0,0,0,0.5)">
+    <h2 style="color:#fff;font-size:18px;margin-bottom:16px;text-align:center">⚠️ Beta User Agreement</h2>
+    <div style="font-size:13px;line-height:1.8;margin-bottom:20px">
+      <p style="margin-bottom:12px">This <strong>Automated Scanning Agent</strong> requires a cross-account <strong>ReadOnly IAM Role</strong> to fetch real-time data from your target AWS account.</p>
+      <p style="margin-bottom:12px">By using this beta site, you acknowledge and agree to the following:</p>
+      <ul style="margin-left:18px;margin-bottom:12px">
+        <li>All metadata fetched from the target account will be used <strong>solely for runtime analysis</strong>.</li>
+        <li>This beta site <strong>does not store any configuration data</strong> except the final report delivered through the agent.</li>
+        <li>Generated reports are stored in an S3 bucket and delivered via a <strong>presigned URL provided once on-the-fly</strong>. The link will not be stored in any form.</li>
+        <li>All generated reports will <strong>expire in 60 minutes</strong> and be automatically purged.</li>
+      </ul>
+    </div>
+    <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;margin-bottom:20px;font-size:13px">
+      <input type="checkbox" id="agree-check" style="margin-top:3px;width:16px;height:16px;flex-shrink:0">
+      <span>I have read and agree to the terms above. I understand that the ReadOnly IAM Role will be used to access my AWS account data for analysis purposes only.</span>
+    </label>
+    <div id="agree-alert" style="display:none;color:#ef4444;font-size:12px;margin-bottom:12px;text-align:center">⚠️ Please check the box above to proceed.</div>
+    <div style="text-align:center">
+      <button id="agree-btn" onclick="if(document.getElementById('agree-check').checked){localStorage.setItem('wa_agreed','1');document.getElementById('agreement-overlay').style.display='none'}else{document.getElementById('agree-alert').style.display='block'}" style="padding:10px 32px;background:#0073bb;color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer">I Agree</button>
+    </div>
+  </div>
+</div>
+  <div class="chat-panel">
+    <div id="chat-messages">
+      <div class="welcome" id="welcome">
+        <p class="desc">This is an Autonomous Review Agent that helps you run AWS Well-Architected Framework Reviews. Currently supporting <strong>Security</strong> and <strong>Cost Optimization</strong> pillar assessments.</p>
+
+        <div style="background:linear-gradient(135deg,#1a2a3a,#1a1a2e);border:1px solid #3b82f6;border-radius:12px;padding:20px;margin-bottom:20px">
+          <div style="font-size:15px;font-weight:700;color:#fff;margin-bottom:10px">🔗 Prerequisites — Cross-Account Access</div>
+          <p style="font-size:13px;color:#9ca3af;margin-bottom:12px">We need to deploy a ReadOnly IAM role in your target account to allow this assistant to scan it.</p>
+          <ul style="font-size:13px;color:#d1d5db;margin-left:18px;margin-bottom:14px;line-height:2">
+            <li>Sign-in your own AWS Account in a new browser tab</li>
+            <li>Make sure you have the permission to deploy CloudFormation stack and setup new IAM Role</li>
+            <li>Click the button below</li>
+          </ul>
+          <a href="https://us-west-2.console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/quickcreate?stackName=OpenAB-ReadOnlyAccess&templateURL=https%3A%2F%2Fsandbox-cloudops-xacct-0526-source-256358067059-us-west-2.s3.us-west-2.amazonaws.com%2Ftemplates%2Fcross-account-readonly-role.yaml&param_TrustedAccountId=256358067059&param_TrustedRoleName=sandbox-cloudops-xacct-0526-McpAssumeRole&param_ExternalId=openab-scan" target="_blank" rel="noopener" style="display:inline-block;padding:12px 28px;background:linear-gradient(135deg,#0073bb,#0059a3);color:#fff;border-radius:8px;text-decoration:none;font-weight:700;font-size:15px;box-shadow:0 4px 12px rgba(0,115,187,0.3)">🚀 Deploy ReadOnly Role (One-Click)</a>
+        </div>
+
+        <div class="examples">
+          <div class="ex" style="border-left:3px solid #ef4444;cursor:default">
+            <span>🔒 Security Assessment</span>
+            <p style="font-size:12px;color:#9ca3af;margin:4px 0 8px">Once you have ReadOnly Role ready, enter your prompt like this:</p>
+            <div onclick="tryExample(this)" style="cursor:pointer;padding:6px 10px;background:#0f1b2d;border-radius:4px;margin-bottom:4px">Scan account 123456789012 for a Well-Architected Security assessment</div>
+            <div onclick="tryExample(this)" style="cursor:pointer;padding:6px 10px;background:#0f1b2d;border-radius:4px">Scan account 456789123401 for Security Review</div>
+          </div>
+          <div class="ex" style="border-left:3px solid #f59e0b;cursor:default">
+            <span>💰 Cost Optimization Assessment</span>
+            <p style="font-size:12px;color:#9ca3af;margin:4px 0 8px">Once you have ReadOnly Role ready, enter your prompt like this:</p>
+            <div onclick="tryExample(this)" style="cursor:pointer;padding:6px 10px;background:#0f1b2d;border-radius:4px">Scan account 123456789012 for a Well-Architected Cost Optimization</div>
+          </div>
+        </div>
+
+        <p style="font-size:12px;color:#6b7280;margin-top:12px">Replace <code>123456789012</code> with your actual AWS account ID. Results typically take 2-5 minutes.<br/><br/>Keep your browser open — a brief summary will appear in the task panel on the right, along with a link to download the detailed assessment report. <strong>The report link will not be retrievable after the browser is closed.</strong></p>
+      </div>
+    </div>
+    <div class="input-bar">
+      <textarea id="input" rows="2" placeholder="Ask about your AWS environment..."></textarea>
+      <button id="send-btn" onclick="send()">Send</button>
+      <button id="show-tasks-btn" onclick="togglePanel()" style="display:none;background:#1a2740;color:#60a5fa;border:1px solid #2a3a50;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap">📋 Tasks</button>
+    </div>
+  </div>
+  <div class="resizer" id="resizer"></div>
+  <div class="task-panel" id="task-panel">
+    <div class="task-header">
+      <h2>📋 Tasks</h2>
+      <button class="toggle-btn" onclick="togglePanel()" title="Collapse">✕</button>
+    </div>
+    <div class="task-count" id="task-count"></div>
+    <div id="task-list"></div>
+  </div>
+</div>
+<footer style="background:#161e2d;border-top:1px solid #2a3a50;padding:10px 20px;display:flex;align-items:center;justify-content:center;gap:24px;font-size:12px;color:#6b7280;flex-shrink:0">
+  <a href="https://aws.amazon.com/agreement/" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:none">AWS Customer Agreement</a>
+  <a href="https://aws.amazon.com/architecture/well-architected/" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:none">AWS Well-Architected</a>
+</footer>
+<script src="/config.js" onerror=""></script>
+<script>
+const chatEl=document.getElementById('chat-messages'),inputEl=document.getElementById('input'),taskListEl=document.getElementById('task-list'),taskCountEl=document.getElementById('task-count'),panel=document.getElementById('task-panel'),statusDot=document.getElementById('status-dot'),statusText=document.getElementById('status-text');
+const tasks={};let ws,lastUserMsg='',pendingName='';
+
+// Agreement overlay
+if(localStorage.getItem('wa_agreed')){document.getElementById('agreement-overlay').style.display='none'}
+
+// Resizable panels
+(function initResizer(){
+  const resizer=document.getElementById('resizer');
+  let dragging=false,startX,startW;
+  resizer.addEventListener('mousedown',e=>{
+    dragging=true;startX=e.clientX;startW=panel.offsetWidth;
+    resizer.classList.add('active');
+    document.body.style.cursor='col-resize';
+    document.body.style.userSelect='none';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove',e=>{
+    if(!dragging)return;
+    const dx=startX-e.clientX;
+    panel.style.width=Math.max(200,startW+dx)+'px';
+  });
+  document.addEventListener('mouseup',()=>{
+    if(!dragging)return;
+    dragging=false;resizer.classList.remove('active');
+    document.body.style.cursor='';document.body.style.userSelect='';
+  });
+})();
+
+function saveTasks(){}
+
+function connect(){
+  const proto=location.protocol==='https:'?'wss:':'ws:';
+  const url=window.APP_CONFIG?.api?.wsEndpoint||`${proto}//${location.host}/ws`;
+  ws=new WebSocket(url);
+  ws.onopen=()=>setStatus(true);
+  ws.onclose=()=>{setStatus(false);setTimeout(connect,3000)};
+  ws.onmessage=e=>handleMsg(JSON.parse(e.data));
+}
+
+// Prewarm runtime on page load
+fetch('/api/orchestrator/warmup').catch(()=>{});
+
+function setStatus(on){
+  statusDot.style.background=on?'#22c55e':'#ef4444';
+  statusText.textContent=on?'Connected':'Disconnected';
+}
+
+function send(){
+  const t=inputEl.value.trim();
+  if(!t||!ws||ws.readyState!==1)return;
+  lastUserMsg=t;
+  addChat('user',t);
+  ws.send(JSON.stringify({text:t}));
+  inputEl.value='';
+}
+
+inputEl.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
+
+// Derive a short task name from the user message
+function briefName(msg){
+  const w=msg.replace(/[?!.,]+/g,'').trim().split(/\s+/);
+  if(w.length<=4)return w.map(s=>s[0].toUpperCase()+s.slice(1)).join(' ');
+  const skip=new Set(['what','whats','what\'s','is','my','the','a','an','can','you','me','please','do','how','are','i','to','of','for','in','on','about']);
+  const key=w.filter(s=>!skip.has(s.toLowerCase())).slice(0,4);
+  return (key.length?key:w.slice(0,3)).map(s=>s[0].toUpperCase()+s.slice(1)).join(' ');
+}
+
+function handleMsg(m){
+  switch(m.type){
+    case 'ack':
+      addChat('ai ack',m.message);
+      pendingName=briefName(lastUserMsg);
+      break;
+    case 'task_started':
+      // backend sends real task_id — create the task item immediately with correct ID
+      const name=lastUserMsg||'Task';
+      tasks[m.task_id]={status:'running',name:name,text:'',data:null,started:Date.now()};
+      renderTaskItem(m.task_id);
+      saveTasks();
+      break;
+    case 'chat':
+      addChat('ai',m.message);
+      break;
+    case 'task_complete':
+      updateTask(m.task_id,'done',m.brief||m.message,m.data);
+      break;
+    case 'task_error':
+      updateTask(m.task_id,'error',m.message);
+      break;
+    case 'detail':
+      resolveTask(m.task_id,'done',null,m.data);
+      break;
+    case 'brief':
+      resolveTask(m.task_id,'done',m.message);
+      break;
+    case 'onboard_required':
+      addOnboardCard(m.account_id, m.cfn_link, m.message);
+      break;
+  }
+}
+
+function addChat(cls,text){
+  const d=document.createElement('div');
+  d.className='msg '+cls;
+  d.innerHTML=cls.startsWith('ai')?renderMd(text):esc(text);
+  chatEl.appendChild(d);
+  chatEl.scrollTop=chatEl.scrollHeight;
+}
+
+function addOnboardCard(accountId, cfnLink, message){
+  const d=document.createElement('div');
+  d.className='msg ai';
+  d.innerHTML=`
+    <div style="border:1px solid #4a9eff;border-radius:8px;padding:12px;margin:4px 0;background:#1a2a3a">
+      <div style="font-weight:700;margin-bottom:8px">🔐 Cross-Account Access Setup</div>
+      <div style="margin-bottom:10px;font-size:13px">Account <code>${esc(accountId)}</code> needs a ReadOnly role deployed. Click below to deploy it via CloudFormation (opens in new tab).</div>
+      <a href="${esc(cfnLink)}" target="_blank" rel="noopener" style="display:inline-block;padding:8px 16px;background:#4a9eff;color:#fff;border-radius:4px;text-decoration:none;font-weight:600;font-size:13px">Deploy ReadOnly Role →</a>
+      <div style="margin-top:10px;font-size:12px;color:#888">Once deployed, type <strong>"done"</strong> to proceed with the scan.</div>
+    </div>`;
+  chatEl.appendChild(d);
+  chatEl.scrollTop=chatEl.scrollHeight;
+}
+
+function tryExample(el){inputEl.value=el.textContent.trim();send()}
+
+// Update a task that already exists by its real ID
+function updateTask(id,status,text,data){
+  if(!tasks[id]){
+    tasks[id]={status:'running',name:'Task',text:'',data:null,started:Date.now()};
+    renderTaskItem(id);
+  }
+  const t=tasks[id];
+  t.status=status;
+  if(status==='done'||status==='error')t.completed=Date.now();
+  if(text!=null)t.text=text;
+  if(data!=null)t.data=data;
+  refreshTaskUI(id);
+  saveTasks();
+}
+
+function renderTaskItem(id){
+  const t=tasks[id];
+  const item=document.createElement('div');
+  item.className='task-item';item.id='task-'+id;
+  item.innerHTML=`<div class="task-row" onclick="toggleTask('${id}')"><div class="task-icon"><div class="spinner"></div></div><div class="task-label">${esc(t.name)} (${id})</div><span class="task-chevron">▶</span></div><div class="task-body"></div>`;
+  taskListEl.prepend(item);
+  updateCount();
+  if(panel.classList.contains('collapsed'))togglePanel();
+}
+
+function refreshTaskUI(id){
+  const t=tasks[id],el=document.getElementById('task-'+id);
+  if(!el)return;
+  const icon=el.querySelector('.task-icon');
+  const label=el.querySelector('.task-label');
+  const body=el.querySelector('.task-body');
+  const displayId=id;
+  if(t.status==='done'){
+    icon.innerHTML='<div class="dot-green"></div>';
+    label.textContent=t.name+' ('+displayId+')';
+  }else if(t.status==='error'){
+    icon.innerHTML='<div class="dot-red"></div>';
+    label.textContent=t.name+' ('+displayId+')';
+  }else{
+    label.textContent=t.name+' ('+displayId+')';
+  }
+  // Time spent
+  let timeStr='';
+  if(t.started){
+    const elapsed=((t.completed||Date.now())-t.started)/1000;
+    if(elapsed>=60)timeStr=Math.floor(elapsed/60)+'m '+Math.floor(elapsed%60)+'s';
+    else timeStr=Math.floor(elapsed)+'s';
+  }
+  const timeEl=el.querySelector('.task-time');
+  if(timeEl)timeEl.textContent=timeStr;
+  else if(timeStr){const s=document.createElement('span');s.className='task-time';s.style.cssText='font-size:11px;color:#6b7280;margin-left:8px';s.textContent=timeStr;el.querySelector('.task-row').appendChild(s)}
+  let html='';
+  if(t.text)html+=renderMd(t.text);
+  if(t.data)html+='<pre>'+esc(JSON.stringify(t.data,null,2))+'</pre>';
+  if(t.status==='running')html+='<button onclick="checkTask(\''+id+'\')" style="margin-top:6px;padding:4px 12px;background:#4a9eff;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:12px">Check Status</button>';
+  body.innerHTML=html||'<em>No details yet.</em>';
+  updateCount();
+}
+
+function toggleTask(id){
+  const el=document.getElementById('task-'+id);
+  el.querySelector('.task-body').classList.toggle('open');
+  el.querySelector('.task-chevron').classList.toggle('open');
+}
+
+function togglePanel(){
+  panel.classList.toggle('collapsed');
+  const r=document.getElementById('resizer');
+  const tb=document.getElementById('show-tasks-btn');
+  if(panel.classList.contains('collapsed')){r.style.display='none';panel.style.width='0';tb.style.display=''}
+  else{r.style.display='';panel.style.width='50%';tb.style.display='none'}
+}
+
+function updateCount(){
+  const ids=Object.keys(tasks);
+  const done=ids.filter(k=>tasks[k].status==='done').length;
+  const err=ids.filter(k=>tasks[k].status==='error').length;
+  const run=ids.length-done-err;
+  taskCountEl.textContent=`${ids.length} task${ids.length!==1?'s':''} — ${run} running, ${done} done${err?', '+err+' error':''}`;
+}
+
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+
+function renderMd(text){
+  return esc(text)
+    .replace(/```(\w*)\n([\s\S]*?)```/g,'<pre><code>$2</code></pre>')
+    .replace(/`([^`]+)`/g,'<code>$1</code>')
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g,'<em>$1</em>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank" rel="noopener" style="color:#4a9eff">$1</a>')
+    .replace(/^### (.+)$/gm,'<div style="font-size:15px;font-weight:700;margin:10px 0 4px">$1</div>')
+    .replace(/^## (.+)$/gm,'<div style="font-size:16px;font-weight:700;margin:12px 0 4px">$1</div>')
+    .replace(/^# (.+)$/gm,'<div style="font-size:18px;font-weight:700;margin:14px 0 6px">$1</div>')
+    .replace(/^[*-] (.+)$/gm,'<li style="margin-left:16px">$1</li>')
+    .replace(/^\d+\. (.+)$/gm,'<li style="margin-left:16px;list-style-type:decimal">$1</li>')
+    .replace(/^---$/gm,'<hr style="border:none;border-top:1px solid #555;margin:8px 0">')
+    .replace(/\n\n/g,'<br/><br/>').replace(/\n/g,'<br/>');
+}
+
+async function checkTask(id){
+  const btn=event.target;btn.textContent='Checking...';btn.disabled=true;
+  try{
+    const r=await fetch('/api/orchestrator/tasks/'+id+'/status');
+    const d=await r.json();
+    if(d.status==='complete'){
+      updateTask(id,'done',d.result);
+    }else if(d.status==='error'){
+      updateTask(id,'error',d.result||'Task failed');
+    }else{
+      btn.textContent='Still running...';setTimeout(()=>{btn.textContent='Check Status';btn.disabled=false},2000);
+    }
+  }catch(e){btn.textContent='Check Status';btn.disabled=false;}
+}
+
+connect();
+</script>
+</body>
+</html>
