@@ -45,4 +45,32 @@ python3 deploy_runtime.py
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `AWS_REGION` | auto | AWS region (provided by AgentCore task role) |
-| `MODEL_ID` | no | Bedrock model (default: us.anthropic.claude-3-7-sonnet-20250219-v1:0) |
+| `MODEL_ID` | no | Bedrock model (default: anthropic.claude-opus-4-6-v1) |
+| `MODEL_ID_SSM_PARAM` | no | SSM parameter path to override model ID at runtime |
+| `STEERING_PATH` | no | Local path to steering .md files (default: /app/steering) |
+| `STEERING_S3_URI` | no | S3 URI to load steering files from (e.g. s3://bucket/steering/) |
+
+## Steering Files (WA Review Flow)
+
+The agent loads kiro-style steering files (.md) to guide its behavior. These are injected into the system prompt on each request.
+
+### Structure
+```
+steering/
+├── product.md              # Agent identity and output format
+├── flow.md                 # Review process steps
+└── pillars/                # Per-pillar check definitions
+    ├── security.md         # SEC-01 through SEC-08
+    ├── reliability.md      # REL-01 through REL-05
+    ├── cost.md             # COST-01 through COST-05
+    └── operational-excellence.md  # OPS-01 through OPS-04
+```
+
+### Loading Priority
+1. `STEERING_S3_URI` — load from S3 (allows updates without rebuild)
+2. `STEERING_PATH` — load from local filesystem (baked into image)
+
+### Custom Steering
+To customize the review flow, either:
+- Replace files in `steering/` before building the image
+- Upload to S3 and set `STEERING_S3_URI` env var on the runtime

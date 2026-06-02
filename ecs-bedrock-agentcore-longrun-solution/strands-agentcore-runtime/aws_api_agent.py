@@ -2,6 +2,8 @@
 
 This avoids the known IAM credential passthrough issue with MCP subprocesses
 by using strands_tools which call boto3 directly in-process.
+
+Supports kiro-style steering files (.md) for guiding WA review flows.
 """
 import os
 import subprocess
@@ -11,6 +13,7 @@ import boto3
 from strands import Agent, tool
 from strands.models import BedrockModel
 from strands_tools import think
+from steering import load_steering_files
 
 logger = logging.getLogger(__name__)
 DEFAULT_MODEL_ID = "anthropic.claude-opus-4-6-v1"
@@ -98,9 +101,11 @@ def create_supervisor_agent():
     """Create the top-level supervisor agent."""
     model_id = get_model_id()
     bedrock_model = BedrockModel(model_id=model_id)
-    return Agent(
-        model=bedrock_model,
-        system_prompt="""You are an AWS Operations Assistant. You help users query and inspect AWS resources.
+
+    # Load steering files (WA review flow, pillar guidance, etc.)
+    steering = load_steering_files()
+
+    base_prompt = """You are an AWS Operations Assistant. You help users query and inspect AWS resources.
 
 Available tools:
 - call_aws: Execute AWS CLI commands (e.g. 'aws s3 ls', 'aws ec2 describe-instances')
@@ -108,6 +113,15 @@ Available tools:
 - think: Plan complex operations before executing
 
 Always use call_boto3 for simple operations. Use call_aws for complex CLI commands with specific flags.
-Be concise in responses. Show the key information users need.""",
+Be concise in responses. Show the key information users need."""
+
+    if steering:
+        system_prompt = f"{base_prompt}\n\n{steering}"
+    else:
+        system_prompt = base_prompt
+
+    return Agent(
+        model=bedrock_model,
+        system_prompt=system_prompt,
         tools=[call_aws, call_boto3, think],
     )
