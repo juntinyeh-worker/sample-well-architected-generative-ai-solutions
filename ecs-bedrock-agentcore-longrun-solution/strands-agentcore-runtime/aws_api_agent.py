@@ -105,7 +105,9 @@ def create_supervisor_agent():
     # Load steering files (WA review flow, pillar guidance, etc.)
     steering = load_steering_files()
 
-    base_prompt = """You are an AWS Operations Assistant. You help users query and inspect AWS resources.
+    base_prompt = f"""You are an AWS Operations Assistant. You help users query and inspect AWS resources.
+
+Current date: {__import__('datetime').datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
 
 Available tools:
 - call_aws: Execute AWS CLI commands (e.g. 'aws s3 ls', 'aws ec2 describe-instances')
