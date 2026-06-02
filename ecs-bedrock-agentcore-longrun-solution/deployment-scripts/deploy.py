@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Deploy the AgentCore Long-Running Orchestrator stack (multi-phase)."""
+"""Deploy the AgentCore Long-Running Orchestrator stack (multi-phase).
+
+Supports choosing between 'kiro' and 'strands' runtime via --runtime flag.
+
+Usage:
+    python deploy.py --stack-name agentcore-longrun --runtime strands
+    python deploy.py --stack-name agentcore-longrun --runtime kiro
+"""
 import argparse
 import boto3
 import os
@@ -8,27 +15,44 @@ import time
 import zipfile
 import tempfile
 
+RUNTIME_CONFIGS = {
+    "kiro": {
+        "source_dir": "kiro-agentcore-runtime",
+        "ecr_repo": "kiro-agentcore",
+        "runtime_name": "kiro_mcp_agent",
+        "requires_api_key": True,
+    },
+    "strands": {
+        "source_dir": "strands-agentcore-runtime",
+        "ecr_repo": "strands-agentcore",
+        "runtime_name": "strands_aws_api_agent",
+        "requires_api_key": False,
+    },
+}
+
 
 def get_args():
     parser = argparse.ArgumentParser(description="Deploy AgentCore Long-Running Orchestrator")
     parser.add_argument("--stack-name", default="agentcore-longrun", help="CloudFormation stack name")
     parser.add_argument("--region", default="us-west-2", help="AWS region")
+    parser.add_argument("--runtime", default="strands", choices=["kiro", "strands"],
+                        help="Agent runtime: 'strands' (Strands Agents, no API key) or 'kiro' (Kiro CLI, requires KIRO_API_KEY)")
     parser.add_argument("--environment", default="prod", choices=["dev", "staging", "prod"])
     parser.add_argument("--demo-mask-output", default="false", choices=["true", "false"])
     parser.add_argument("--demo-read-only", default="false", choices=["true", "false"])
     parser.add_argument("--phase", default="all", choices=["infra", "build", "update", "all"],
-                        help="infra=create stack with placeholder, build=build images, update=switch to real image, all=full deploy")
+                        help="infra=create stack, build=build images, update=switch to real image, all=full deploy")
     return parser.parse_args()
 
 
-def upload_source(source_bucket, region):
+def upload_source(source_bucket, region, runtime_dir):
     """Zip and upload backend + agent source to S3."""
     s3 = boto3.client("s3", region_name=region)
     base = os.path.join(os.path.dirname(__file__), "..")
 
     for name, paths in [
         ("backend-source.zip", ["ecs-backend", "deployment-scripts/buildspecs"]),
-        ("agent-source.zip", ["kiro-agentcore-runtime", "deployment-scripts/buildspecs"]),
+        ("agent-source.zip", [runtime_dir, "deployment-scripts/buildspecs"]),
     ]:
         with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
             with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -43,7 +67,7 @@ def upload_source(source_bucket, region):
                         zf.write(full, os.path.relpath(full, base))
             s3.upload_file(tmp.name, source_bucket, name)
             os.unlink(tmp.name)
-            print(f"  Uploaded {name} to s3://{source_bucket}/{name}")
+        print(f"  Uploaded {name} to s3://{source_bucket}/{name}")
 
 
 def deploy_stack(stack_name, region, args, backend_image="public.ecr.aws/nginx/nginx:alpine",
@@ -71,8 +95,8 @@ def deploy_stack(stack_name, region, args, backend_image="public.ecr.aws/nginx/n
 
     if is_update:
         try:
-            cfn.update_stack(StackName=stack_name, TemplateBody=template_body, Parameters=params,
-                             Capabilities=["CAPABILITY_IAM"])
+            cfn.update_stack(StackName=stack_name, TemplateBody=template_body,
+                           Parameters=params, Capabilities=["CAPABILITY_IAM"])
             print(f"Updating stack: {stack_name}")
         except cfn.exceptions.ClientError as e:
             if "No updates" in str(e):
@@ -82,14 +106,13 @@ def deploy_stack(stack_name, region, args, backend_image="public.ecr.aws/nginx/n
             raise
         waiter = cfn.get_waiter("stack_update_complete")
     else:
-        cfn.create_stack(StackName=stack_name, TemplateBody=template_body, Parameters=params,
-                         Capabilities=["CAPABILITY_IAM"])
+        cfn.create_stack(StackName=stack_name, TemplateBody=template_body,
+                        Parameters=params, Capabilities=["CAPABILITY_IAM"])
         print(f"Creating stack: {stack_name}")
         waiter = cfn.get_waiter("stack_create_complete")
 
     print("Waiting for stack operation to complete...")
     waiter.wait(StackName=stack_name, WaiterConfig={"Delay": 15, "MaxAttempts": 80})
-
     outputs = cfn.describe_stacks(StackName=stack_name)["Stacks"][0].get("Outputs", [])
     return {o["OutputKey"]: o["OutputValue"] for o in outputs}
 
@@ -105,7 +128,6 @@ def run_codebuild(project_name, region):
     build = cb.start_build(projectName=project_name)
     build_id = build["build"]["id"]
     print(f"  Started build: {build_id}")
-
     while True:
         resp = cb.batch_get_builds(ids=[build_id])
         status = resp["builds"][0]["buildStatus"]
@@ -129,8 +151,11 @@ def deploy_frontend(outputs, region):
         print(f"Warning: {dist_dir} not found, skipping frontend deploy")
         return
 
-    content_types = {".html": "text/html", ".js": "application/javascript", ".css": "text/css",
-                     ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png"}
+    content_types = {
+        ".html": "text/html", ".js": "application/javascript",
+        ".css": "text/css", ".json": "application/json",
+        ".svg": "image/svg+xml", ".png": "image/png",
+    }
     for root, _, files in os.walk(dist_dir):
         for f in files:
             path = os.path.join(root, f)
@@ -145,42 +170,53 @@ def main():
     args = get_args()
     stack_name = args.stack_name
     region = args.region
-    print(f"Deploying {stack_name} to {region} (phase: {args.phase})")
+    runtime = args.runtime
+    rt_config = RUNTIME_CONFIGS[runtime]
+
+    print(f"Deploying {stack_name} to {region} (phase: {args.phase}, runtime: {runtime})")
+    print(f"  Runtime source: {rt_config['source_dir']}")
+    print(f"  ECR repo: {rt_config['ecr_repo']}")
+
+    if rt_config["requires_api_key"] and not os.getenv("KIRO_API_KEY"):
+        print("WARNING: kiro runtime requires KIRO_API_KEY env var for deploy_runtime.py")
 
     if args.phase in ("infra", "all"):
         print("\n=== Phase 1: Deploy infrastructure with placeholder image ===")
         outputs = deploy_stack(stack_name, region, args)
         source_bucket = outputs["SourceBucket"]
+
         print("\nStack outputs:")
         for k, v in outputs.items():
             print(f"  {k}: {v}")
+
         print("\n  Uploading source code...")
-        upload_source(source_bucket, region)
+        upload_source(source_bucket, region, rt_config["source_dir"])
         deploy_frontend(outputs, region)
 
     if args.phase in ("build", "all"):
         outputs = get_stack_outputs(stack_name, region)
+
         print("\n=== Phase 2: Build backend image ===")
         if not run_codebuild(outputs["BackendBuildProject"], region):
             print("ERROR: Backend build failed!")
             sys.exit(1)
 
-        print("\n=== Phase 3: Build agent image ===")
+        print(f"\n=== Phase 3: Build {runtime} agent image ===")
         if not run_codebuild(outputs["AgentBuildProject"], region):
-            print("ERROR: Agent build failed!")
+            print(f"ERROR: {runtime} agent build failed!")
             sys.exit(1)
 
     if args.phase in ("update", "all"):
         print("\n=== Phase 4: Update ECS with real backend image ===")
         outputs = get_stack_outputs(stack_name, region)
         backend_image = f"{outputs['BackendECRRepo']}:latest"
-        outputs = deploy_stack(stack_name, region, args,
-                               backend_image=backend_image, create_runtime=True)
+        outputs = deploy_stack(stack_name, region, args, backend_image=backend_image, create_runtime=True)
+
         print("\nFinal stack outputs:")
         for k, v in outputs.items():
             print(f"  {k}: {v}")
 
-    print(f"\n✅ Phase '{args.phase}' complete!")
+    print(f"\n✅ Phase '{args.phase}' complete! (runtime: {runtime})")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,23 @@
+version: 0.2
+env:
+  variables:
+    ECR_REPO_NAME: "strands-agentcore"
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to ECR
+      - ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+      - REGION=${AWS_REGION:-us-west-2}
+      - ECR_URI="${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/${ECR_REPO_NAME}"
+      - aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin ${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com
+      - aws ecr create-repository --repository-name $ECR_REPO_NAME --region $REGION || echo "repo exists"
+  build:
+    commands:
+      - echo Building Docker image
+      - docker build --pull --no-cache -t $ECR_URI:latest .
+  post_build:
+    commands:
+      - echo Pushing to ECR
+      - docker push $ECR_URI:latest
+      - aws ecr start-image-scan --repository-name $ECR_REPO_NAME --image-id imageTag=latest --region $REGION || true
+      - echo "Done"
